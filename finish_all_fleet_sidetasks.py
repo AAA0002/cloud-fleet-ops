@@ -2842,6 +2842,22 @@ async def main():
         except Exception:
             pass
 
+        try:
+            from ably_logger import publish_ably_event
+            publish_ably_event("harvest_completed", {
+                "accounts_farmed": len(ACCOUNTS),
+                "total_tasks_claimed": total_tasks,
+                "elapsed_seconds": round(elapsed, 1),
+                "protocols": {
+                    "atf": atf_tot, "kynex": kyn_tot, "pepe": pep_tot, "adx": adx_tot,
+                    "chicken": chk_tot, "earnvault": ev_tot, "mexo": mxo_tot, "myage": age_tot,
+                    "lifetime": life_tot, "cherry": cherry_tot, "victor": vic_tot,
+                    "azm": azm_tot, "dillo": dillo_tot, "hunter": hntr_tot
+                }
+            })
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     asyncio.run(main())
