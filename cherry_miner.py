@@ -88,11 +88,11 @@ def generate_device_id(uid: str) -> str:
 
 
 class CherryClient:
-    def __init__(self, uid: str, name: str, init_data: str, ton_wallet: str = MASTER_TON_VAULT):
-        self.uid = str(uid)
-        self.name = name
-        self.init_data = init_data
-        self.ton_wallet = ton_wallet
+    def __init__(self, uid: Optional[str] = None, name: Optional[str] = None, init_data: Optional[str] = None, ton_wallet: str = MASTER_TON_VAULT, **kwargs):
+        self.uid = str(uid or kwargs.get("user_id") or kwargs.get("uid") or "")
+        self.name = name or kwargs.get("name") or f"Account {self.uid}"
+        self.init_data = init_data or kwargs.get("init_data") or ""
+        self.ton_wallet = ton_wallet or kwargs.get("ton_wallet") or MASTER_TON_VAULT
         self.device_id = generate_device_id(self.uid)
         self.balance = 0
         self.tickets = 0
@@ -220,15 +220,149 @@ class CherryClient:
         res = await self.call_api(session, "/friends/claim", body={}, method="POST")
         return res or {}
 
-    async def bind_ton_wallet(self, session: aiohttp.ClientSession, addr: str) -> Dict[str, Any]:
-        """Bind non-custodial TON wallet address."""
+    async def bind_ton_wallet(self, session: aiohttp.ClientSession, addr: str, bsc_addr: Optional[str] = None) -> Dict[str, Any]:
+        """Bind non-custodial TON wallet address (gram_ton & usdt_ton) and BSC address (usdt_bep20)."""
         if not addr:
             return {}
-        res = await self.call_api(session, "/wallet", body={"method": "ton", "addr": addr}, method="POST")
-        return res or {}
+        res1 = await self.call_api(session, "/wallet", body={"method": "gram_ton", "addr": addr}, method="POST")
+        res2 = await self.call_api(session, "/wallet", body={"method": "usdt_ton", "addr": addr}, method="POST")
+        res3 = None
+        if bsc_addr:
+            res3 = await self.call_api(session, "/wallet", body={"method": "usdt_bep20", "addr": bsc_addr}, method="POST")
+        return res1 or res2 or res3 or {}
+
+    async def execute_withdrawal(self, session: aiohttp.ClientSession, method: str = "usdt_ton") -> Dict[str, Any]:
+        """
+        Executes on-chain cashout from Cherry Play (/api/withdraw).
+        Validates minimum balance (8,000 🍒 = $0.08 USD), plays prerequisite short ad (/ads/start & complete),
+        and submits the payout request to the account's bound TON or BSC vault.
+        """
+        b_data = await self.bootstrap(session)
+        if not b_data or b_data.get("error"):
+            return {"success": False, "error": "bootstrap_failed"}
+
+        cfg = b_data.get("config", {})
+        min_w = float(cfg.get("min_withdraw", 8000) or 8000)
+        withdraw_on = cfg.get("withdraw_on", True)
+        if not withdraw_on:
+            return {"success": False, "error": "withdrawals_paused_by_server"}
+
+        user = b_data.get("user", {})
+        bal = float(user.get("balance", 0) or 0)
+        if bal < min_w:
+            return {"success": False, "error": f"below_threshold_{bal}_{min_w}"}
+
+        addrs = user.get("addresses", {})
+        if not addrs.get(method):
+            if self.ton_wallet:
+                await self.bind_ton_wallet(session, self.ton_wallet)
+                addrs[method] = self.ton_wallet
+            else:
+                return {"success": False, "error": f"no_address_saved_for_{method}"}
+
+        ads_cfg = b_data.get("ads", {})
+        if ads_cfg.get("withdraw_ads", 1) > 0:
+            try:
+                st = await self.call_api(session, "/ads/start", body={"placement": "withdraw"}, method="POST")
+                if st and not st.get("error"):
+                    ad_tok = st.get("token")
+                    min_watch = int(st.get("min_watch", 5) or 5)
+                    await asyncio.sleep(max(min_watch + 1, 6))
+                    await self.call_api(session, "/ads/complete", body={"token": ad_tok, "shown": 1, "clicks": 1}, method="POST")
+            except Exception:
+                pass
+
+        wd_amount = int(bal // 100) * 100
+        if wd_amount < min_w:
+            wd_amount = int(min_w)
+
+        res = await self.call_api(session, "/withdraw", body={"amount": wd_amount, "method": method}, method="POST")
+        if res and not res.get("error") and res.get("withdrawal"):
+            w_info = res.get("withdrawal", {})
+            return {
+                "success": True,
+                "tx_id": w_info.get("id"),
+                "amount": wd_amount,
+                "usd": w_info.get("usd", 0.08),
+                "address": w_info.get("address", addrs.get(method)),
+                "net": w_info.get("net", method),
+                "status": w_info.get("status", "pending")
+            }
+        return {"success": False, "error": res.get("error") if res else "withdraw_request_failed"}
+
+    async def unlock_pending_reward(self, session: aiohttp.ClientSession, pending_item: Dict[str, Any]) -> bool:
+        """Unlocks and claims pending arcade/spin reward by watching required short rewarded ad."""
+        pid = pending_item.get("id")
+        note = pending_item.get("note", "reward")
+        amt = pending_item.get("amount", 0)
+        if not pid:
+            return False
+        try:
+            st = await self.call_api(session, "/ads/start", body={"placement": "claim", "ref": pid}, method="POST")
+            if not st or st.get("error"):
+                return False
+            tok = st.get("token")
+            min_watch = int(st.get("min_watch", 5) or 5)
+            await asyncio.sleep(max(min_watch + 1, 6))
+            cmp = await self.call_api(session, "/ads/complete", body={"token": tok, "shown": 1, "clicks": 1}, method="POST")
+            if cmp and (cmp.get("claimed") or not cmp.get("error")):
+                new_bal = cmp.get("balance")
+                if new_bal:
+                    self.balance = float(new_bal)
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def play_arcade_game(self, session: aiohttp.ClientSession, game_code: str) -> Optional[int]:
+        """Plays one arcade round with optimal score and unlocks the resulting pending reward."""
+        try:
+            st = await self.call_api(session, f"/games/{game_code}/start", body={"difficulty": "medium"}, method="POST")
+            if not st or st.get("error"):
+                return None
+            session_id = st.get("session")
+            paid = st.get("paid", True)
+            min_sec = int(st.get("min_seconds", 3) or 3)
+            if not session_id or not paid:
+                return None
+
+            await asyncio.sleep(min_sec + 1)
+            score = 250
+            fin = await self.call_api(session, "/games/finish", body={"session": session_id, "score": score}, method="POST")
+            if not fin or fin.get("error"):
+                return None
+
+            reward = fin.get("reward", 0)
+            pending = fin.get("pending")
+            if pending and isinstance(pending, dict):
+                await asyncio.sleep(2)
+                await self.unlock_pending_reward(session, pending)
+            return reward
+        except Exception:
+            return None
+
+    async def watch_and_claim_ad(self, session: aiohttp.ClientSession, task_id: int, title: str) -> Optional[str]:
+        """Watch a rewarded ad placement and claim task reward."""
+        try:
+            st = await self.call_api(session, "/ads/start", body={"placement": "task", "ref": task_id}, method="POST")
+            if not st or st.get("error"):
+                return None
+            ad_tok = st.get("token")
+            min_watch = int(st.get("min_watch", 5) or 5)
+            await asyncio.sleep(max(min_watch + 1, 6))
+            cmp = await self.call_api(session, "/ads/complete", body={"token": ad_tok, "shown": 1, "clicks": 1}, method="POST")
+            if not cmp or cmp.get("error"):
+                return None
+            clm = await self.call_api(session, f"/tasks/{task_id}/claim", body={}, method="POST")
+            if clm and not clm.get("error"):
+                rew = clm.get("reward", 0)
+                return f"{title} (+{rew} 🍒)"
+        except Exception:
+            pass
+        return None
 
     async def harvest_tasks(self, session: aiohttp.ClientSession, tasks_data: List[Dict[str, Any]]) -> List[str]:
-        """Iterate through available tasks: start, verify, and claim completed ones."""
+        """Iterate through available tasks: start, wait for server timer, verify, and claim completed ones."""
         claimed = []
         if not tasks_data:
             return claimed
@@ -239,31 +373,48 @@ class CherryClient:
             state = t.get("state", "new")
             reward = t.get("reward", 0)
             kind = t.get("kind", "")
+            check = t.get("check", "")
 
             # Skip invite/deposit/telegram-bio prerequisites if not met
             if kind in ["invite", "deposit", "bio"]:
                 continue
 
+            # Special handling for Rewarded Video Ad tasks
+            if check == "ad" or tid in [12, 17, 18, 19]:
+                rep = t.get("repeat", {})
+                done = int(rep.get("done", 0) or 0)
+                per = int(rep.get("per", 10) or 10)
+                if done < per and state == "idle":
+                    ad_res = await self.watch_and_claim_ad(session, tid, title)
+                    if ad_res:
+                        claimed.append(ad_res)
+                        await asyncio.sleep(15.0) # anti-rate-limit cooldown
+                continue
+
             try:
-                if state == "new":
-                    # Start task
-                    await self.call_api(session, f"/tasks/{tid}/start", body={}, method="POST")
-                    await asyncio.sleep(0.5)
+                if state in ["idle", "new"]:
+                    # Start task and read server timer
+                    st = await self.call_api(session, f"/tasks/{tid}/start", body={}, method="POST")
+                    wait_sec = 5
+                    if isinstance(st, dict):
+                        wait_sec = int(st.get("wait", 5) or 5)
+                    # Timer wait for verification window
+                    await asyncio.sleep(wait_sec + 0.5)
                     # Verify task
-                    await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
-                    await asyncio.sleep(0.5)
-                    # Claim task
-                    c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
-                    if c_res and not c_res.get("error"):
-                        claimed.append(f"{title} (+{reward} 🍒)")
+                    vf = await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
+                    if vf and not vf.get("error"):
+                        # Claim task
+                        c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
+                        if c_res and not c_res.get("error"):
+                            claimed.append(f"{title} (+{reward} 🍒)")
 
                 elif state in ["wait", "verify"]:
                     # Verify & claim
-                    await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
-                    await asyncio.sleep(0.5)
-                    c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
-                    if c_res and not c_res.get("error"):
-                        claimed.append(f"{title} (+{reward} 🍒)")
+                    vf = await self.call_api(session, f"/tasks/{tid}/verify", body={}, method="POST")
+                    if vf and not vf.get("error"):
+                        c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
+                        if c_res and not c_res.get("error"):
+                            claimed.append(f"{title} (+{reward} 🍒)")
 
                 elif state == "claim":
                     c_res = await self.call_api(session, f"/tasks/{tid}/claim", body={}, method="POST")
@@ -274,22 +425,28 @@ class CherryClient:
 
         return claimed
 
-    async def run_full_farming_cycle(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
+    async def run_full_farming_cycle(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """Executes the complete Cherry Play harvest cycle for this account."""
-        report = {
-            "uid": self.uid,
-            "name": self.name,
-            "balance": 0,
-            "tickets": 0,
-            "actions": [],
-            "status": "active"
-        }
+        close_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            close_session = True
 
-        # 1. Bootstrap profile
-        b_data = await self.bootstrap(session)
-        if not b_data or b_data.get("error"):
-            report["status"] = b_data.get("error", "bootstrap_failed") if b_data else "bootstrap_failed"
-            return report
+        try:
+            report = {
+                "uid": self.uid,
+                "name": self.name,
+                "balance": 0,
+                "tickets": 0,
+                "actions": [],
+                "status": "active"
+            }
+
+            # 1. Bootstrap profile
+            b_data = await self.bootstrap(session)
+            if not b_data or b_data.get("error"):
+                report["status"] = b_data.get("error", "bootstrap_failed") if b_data else "bootstrap_failed"
+                return report
 
         report["balance"] = self.balance
         report["tickets"] = self.tickets
@@ -341,15 +498,52 @@ class CherryClient:
             for ct in claimed_tasks:
                 report["actions"].append(f"Task: {ct}")
 
-        # 7. Bind TON wallet if not yet bound
-        wallets = user.get("wallets", {})
-        if isinstance(wallets, dict) and not wallets.get("ton") and self.ton_wallet:
+        # 7. Unlock all existing pending rewards (e.g. from Lucky Wheel, Arcade, Daily chests)
+        pending_list = b_data.get("pending", [])
+        if pending_list and isinstance(pending_list, list):
+            unlocked_count = 0
+            for p in pending_list:
+                if await self.unlock_pending_reward(session, p):
+                    unlocked_count += 1
+                    await asyncio.sleep(6.0)
+            if unlocked_count > 0:
+                report["actions"].append(f"Unlocked {unlocked_count} Pending Rewards 🔓")
+
+        # 8. Play available arcade games (up to daily limits)
+        games_list = b_data.get("games", [])
+        if games_list and isinstance(games_list, list):
+            played_count = 0
+            gained_cherries = 0
+            for g in games_list:
+                code = g.get("code")
+                plays_left = int(g.get("plays_left", 0) or 0)
+                # Play up to 3 turns per game per cycle
+                for _ in range(min(plays_left, 3)):
+                    rew = await self.play_arcade_game(session, code)
+                    if rew is not None:
+                        played_count += 1
+                        gained_cherries += rew
+                        await asyncio.sleep(2.0)
+                    else:
+                        break
+            if played_count > 0:
+                report["actions"].append(f"Played {played_count} Arcade Games (+{gained_cherries} 🍒) 🕹️")
+
+        # 9. Bind TON wallet if not yet bound
+        addresses = user.get("addresses", {})
+        if isinstance(addresses, dict) and not addresses.get("gram_ton") and self.ton_wallet:
             w_res = await self.bind_ton_wallet(session, self.ton_wallet)
             if w_res and not w_res.get("error"):
                 report["actions"].append(f"Bound TON Wallet {self.ton_wallet[:6]}... ✅")
 
         report["balance"] = self.balance
+        report["streak"] = self.streak_day
+        report["tasks_harvested"] = len(claimed_tasks) if 'claimed_tasks' in locals() else 0
+        report["success"] = True
         return report
+        finally:
+            if close_session:
+                await session.close()
 
 
 async def harvest_all_cherry_fleet():
