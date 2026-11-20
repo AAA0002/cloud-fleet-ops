@@ -18,9 +18,8 @@ against official, ground-truth payout thresholds:
 9. AdxEarn AI: >= 70,000 Points ($7.00 USD) -> BEP20 USDT to Master EVM Vault
 10. ATF Miner: >= 10,000 ATF (fee: 70 ATF) -> On-chain TON withdrawal
 11. Victor's Company: Shifts & 10% crew mining commissions swept to Master Account
-12. AZM Miner: >= 10,000 AZM -> On-chain TON withdrawal to dedicated TON wallet
-13. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
-14. Hunter Miner: >= 0.05 GRAM -> Mining claim to Master TON Vault
+12. Dillo Miner: >= 2,400,000 DILLO -> Jetton withdrawal to dedicated TON wallet
+13. Hunter Miner: >= 0.05 GRAM -> Mining claim to Master TON Vault
 
 Complies with:
 - Rule 4: Zero Phone Load Directive (100% Cloud Execution)
@@ -88,8 +87,8 @@ WITHDRAWAL_THRESHOLDS = {
     "earnvault": {
         "name": "EarnVault",
         "symbol": "USD",
-        "threshold": 1.0,
-        "action": "Cashout to BEP20 USDT to Master EVM Vault",
+        "threshold": 5.0,
+        "action": "Cashout to BEP20 USDT (min $5.00, Mon-Fri 15-16 UTC)",
         "unit": "USD"
     },
     "cherry": {
@@ -137,16 +136,9 @@ WITHDRAWAL_THRESHOLDS = {
     "victors": {
         "name": "Victor's Company",
         "symbol": "VICX",
-        "threshold": 5.0,
-        "action": "Claim shift & 10% crew recruitment commission",
+        "threshold": 1500.0,
+        "action": "On-chain withdrawal to bound TON wallet (min 1,500 VICX)",
         "unit": "VICX"
-    },
-    "azm": {
-        "name": "AZM Miner",
-        "symbol": "AZM",
-        "threshold": 10000.0,
-        "action": "Withdraw AZM via /api/withdraw to dedicated TON wallet",
-        "unit": "AZM"
     },
     "dillo": {
         "name": "Dillo Miner",
@@ -158,7 +150,7 @@ WITHDRAWAL_THRESHOLDS = {
     "hunter": {
         "name": "Hunter Miner",
         "symbol": "GRAM",
-        "threshold": 0.05,
+        "threshold": 0.50,
         "action": "Instant on-chain cashout to Master TON Vault",
         "unit": "GRAM"
     }
@@ -469,10 +461,37 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             pass
 
     # 11. Victor's Company
-    vic_init = tokens.get("victors_init_data") or tokens.get("vic_init_data")
+    vic_init = tokens.get("victors_init_data") or tokens.get("vic_init_data") or tokens.get("victors_company") or tokens.get("victors")
     if vic_init:
         try:
             vic_bal = float(tokens.get("victors_balance", 0) or acc.get("victors_balance", 0) or 0)
+            vic_pass = tokens.get("victors_pass") or tokens.get("victors_human_pass")
+            if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
+                try:
+                    async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=2)) as r_vp:
+                        if r_vp.status == 200:
+                            p_res = (await r_vp.json()).get("result")
+                            if p_res:
+                                pd = json.loads(p_res) if isinstance(p_res, str) else p_res
+                                vic_pass = pd.get("humanPass") if isinstance(pd, dict) else pd
+                except Exception:
+                    pass
+            if vic_pass and vic_bal == 0:
+                try:
+                    vh = {
+                        "Authorization": f"tma {vic_init}",
+                        "x-human-pass": str(vic_pass),
+                        "Origin": "https://app.victors.company",
+                        "Referer": "https://app.victors.company/",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                    async with session.get("https://server.victors.company/api/me", headers=vh, timeout=aiohttp.ClientTimeout(total=5)) as vr:
+                        if vr.status == 200:
+                            vd = await vr.json()
+                            vu = vd.get("user") or vd.get("state", {}).get("user") or {}
+                            vic_bal = float(vu.get("inAppBalance", 0) or vu.get("balance", 0) or 0)
+                except Exception:
+                    pass
             threshold = WITHDRAWAL_THRESHOLDS["victors"]["threshold"]
             is_ready = vic_bal >= threshold
             report["protocols"]["victors"] = {
@@ -481,27 +500,6 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             }
             if is_ready:
                 report["ready_to_withdraw"].append(("victors", vic_bal, "VICX"))
-        except Exception:
-            pass
-
-    # 13. AZM Miner
-    azm_init = tokens.get("azm_init_data") or tokens.get("azm") or tokens.get("azmir")
-    if azm_init:
-        try:
-            h = {"X-Init-Data": azm_init, "User-Agent": "Mozilla/5.0"}
-            AZM_BASE = os.getenv("AZM_API_BASE", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api").rstrip("/")
-            async with session.get(f"{AZM_BASE}/state", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as ar:
-                if ar.status == 200:
-                    d = await ar.json()
-                    balance = float(d.get("balance", 0.0) or 0.0)
-                    threshold = float(d.get("min_wd", 10000.0) or 10000.0)
-                    is_ready = balance >= threshold and bool(d.get("wallet"))
-                    report["protocols"]["azm"] = {
-                        "balance": balance, "threshold": threshold, "unit": "AZM",
-                        "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
-                    }
-                    if is_ready:
-                        report["ready_to_withdraw"].append(("azm", balance, "AZM"))
         except Exception:
             pass
 
@@ -547,17 +545,22 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
             client = HunterClient(str(uid), acc.get("name", ""), hunter_init or "", username=acc.get("username", ""), jwt_token=hunter_jwt or "")
             if client.authenticate():
                 u_info = client.user_data
-                balance = float(u_info.get("coin_balance", 0.0) or 0.0)
+                balance = float(u_info.get("withdrawable_balance", 0.0) or u_info.get("gram_balance", 0.0) or u_info.get("coin_balance", 0.0) or 0.0)
                 threshold = WITHDRAWAL_THRESHOLDS["hunter"]["threshold"]
                 is_ready = balance >= threshold
+                m_act = bool(u_info.get("mining_active"))
                 report["protocols"]["hunter"] = {
                     "balance": balance, "threshold": threshold, "unit": "GRAM",
-                    "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0
+                    "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1)) if threshold > 0 else 0,
+                    "mining_active": m_act
                 }
                 if is_ready:
-                    report["ready_to_withdraw"].append(("hunter", balance, "GRAM"))
-                    if execute_sweep:
-                        client.withdraw_gram(balance, MASTER_TON_VAULT)
+                    if m_act:
+                        report["upstream_paused_claims"].append(("hunter", balance, "GRAM"))
+                    else:
+                        report["ready_to_withdraw"].append(("hunter", balance, "GRAM"))
+                        if execute_sweep:
+                            client.withdraw_gram(balance, MASTER_TON_VAULT)
         except Exception:
             pass
 
@@ -602,6 +605,8 @@ async def run_audit_and_sweep(execute_sweep: bool = False, notify: bool = True):
                 reason = "First free payout completed; upstream deposit verification required"
             elif bot_id == "kynex":
                 reason = "Upstream cashouts disabled by bot team pending TGE - HTTP 503"
+            elif bot_id == "hunter":
+                reason = "12h mining session in progress; cashout dispatches upon session completion"
             else:
                 reason = "Upstream cashouts paused by bot team"
             print(f"  ⏸️ [{name}] {p_name}: {bal:.2f} {unit} ({reason})")
