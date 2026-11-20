@@ -274,29 +274,29 @@ def inspect_account_tokens(uid: str) -> Dict[str, Any]:
     """Retrieve and inspect token age for a specific account UID with multi-cloud failover."""
     data = None
 
-    # 1. Primary: Upstash Redis (if available and within quota)
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-            r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=5)
-            if r.status_code == 200 and r.json().get("result"):
-                raw = r.json().get("result")
-                parsed = robust_json_loads(raw)
-                if isinstance(parsed, dict) and parsed:
-                    data = parsed
-        except Exception:
-            pass
+    # 1. High-Capacity Primary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
+    try:
+        t_raw = turso_get(f"fleet:tokens:{uid}")
+        if t_raw:
+            parsed = robust_json_loads(t_raw)
+            if isinstance(parsed, dict) and parsed:
+                data = parsed
+    except Exception:
+        pass
 
-    # 2. Secondary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
+    # 2. Secondary: Upstash Redis (if available and within quota)
     if not data or not isinstance(data, dict):
-        try:
-            t_raw = turso_get(f"fleet:tokens:{uid}")
-            if t_raw:
-                parsed = robust_json_loads(t_raw)
-                if isinstance(parsed, dict) and parsed:
-                    data = parsed
-        except Exception:
-            pass
+        if UPSTASH_URL and UPSTASH_TOKEN:
+            try:
+                url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
+                r = safe_get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=3)
+                if r.status_code == 200 and r.json().get("result"):
+                    raw = r.json().get("result")
+                    parsed = robust_json_loads(raw)
+                    if isinstance(parsed, dict) and parsed:
+                        data = parsed
+            except Exception:
+                pass
 
     # 3. Tertiary: Local fleet_miniapp_tokens.json fallback
     if not data or not isinstance(data, dict):
