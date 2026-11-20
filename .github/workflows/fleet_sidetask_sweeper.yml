@@ -8,15 +8,24 @@ on:
 
 jobs:
   sweep_fleet_sidetasks:
-    name: "Autonomous 14-Bot Fleet Sweeper & Withdrawal Sentinel"
+    name: "Autonomous 13-Bot Fleet Sweeper & Withdrawal Sentinel"
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/aaa0002/cloud-fleet-runner:latest
     timeout-minutes: 60
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: 1. Verify & Auto-Heal Token Freshness (Pre-Flight)
         env:
@@ -31,7 +40,7 @@ jobs:
         run: |
           python scripts/maintenance/token_expiration_watchdog.py --check-only
 
-      - name: 2. Execute 14-Bot Fleet Side-Task & Mining Sweep
+      - name: 2. Execute 13-Bot Fleet Side-Task & Mining Sweep
         env:
           UPSTASH_REDIS_REST_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
           UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
