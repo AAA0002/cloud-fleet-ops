@@ -11,8 +11,7 @@ fleet accounts into Master Vaults and dedicated non-custodial wallets:
 3. Lifetime Energy: Withdraw >= 1,000 Energy to Master TON Vault
 4. EarnVault: Auto-cashout >= $1.00 USD to Binance BEP-20 Master EVM Vault
 5. Victor's Company: Autonomous Rookie Digger shift claims & 10% crew commission sweep
-6. Cherry Play: Referral yield claims, daily streak & wheel spin sweep
-7. MexoEarn: Autonomous daily check-in & Adsgram MXO yield sweep
+6. MexoEarn: Autonomous daily check-in & Adsgram MXO yield sweep
 8. MyAgeApp: Hourly vault harvest, streak bonus & spin prizes
 
 Complies with:
@@ -123,19 +122,32 @@ def load_fleet_accounts() -> List[Dict[str, Any]]:
 
 
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
-    """Retrieve all cached WebApp tokens for an account from Upstash Redis."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return {}
-    url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    """Retrieve all cached WebApp tokens for an account from Upstash Redis or local cache."""
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
+        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    raw = (await resp.json()).get("result")
+                    if raw:
+                        parsed = robust_json_loads(raw)
+                        if parsed:
+                            return parsed
+        except Exception:
+            pass
+
+    # Local file fallback
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            if resp.status == 200:
-                raw = (await resp.json()).get("result")
-                if raw:
-                    return robust_json_loads(raw)
+        local_toks_path = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+        if os.path.exists(local_toks_path):
+            with open(local_toks_path) as f:
+                all_toks = json.load(f)
+                if str(uid) in all_toks:
+                    return all_toks[str(uid)]
     except Exception:
         pass
+
     return {}
 
 
@@ -510,25 +522,6 @@ async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: 
     return None
 
 
-async def sweep_cherry_play(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any], ton_addr: str) -> Optional[Dict[str, Any]]:
-    """Cherry Play: Claim referral earnings, daily streak bonus, spin wheel, and bind TON wallet."""
-    cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
-    if not cherry_init:
-        return None
-
-    try:
-        from cherry_miner import CherryClient
-        client = CherryClient(uid, name, cherry_init, ton_wallet=ton_addr or MASTER_TON_VAULT)
-        res = await client.run_full_farming_cycle(session)
-        if res and res.get("claimed_referral", 0) > 0:
-            amt = float(res.get("claimed_referral", 0))
-            await record_payout_receipt("Cherry Play", "🍒", amt, ton_addr or "Cherry Balance", uid, name)
-            return {"protocol": "Cherry Play", "amount": amt, "symbol": "🍒", "recipient": ton_addr or "Cherry Balance"}
-    except Exception:
-        pass
-    return None
-
-
 async def withdraw_mexoearn(session: aiohttp.ClientSession, uid: str, name: str, tokens: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """MexoEarn: Auto-cashout BEP20 USDT via /api/wallet/withdraw when >= 1666.67 MXO."""
     mexo_init = tokens.get("mexo_init_data")
@@ -880,13 +873,6 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
             results["total_withdrawn_count"] += 1
             results["receipts"].append(vic_res)
             results["by_protocol"]["Victor's Company"] = results["by_protocol"].get("Victor's Company", 0) + 1
-
-        # 6. Cherry Play (Referral Yields & Wheel Spin Sweep)
-        cherry_res = await sweep_cherry_play(session, uid, name, tokens, ton_addr)
-        if cherry_res:
-            results["total_withdrawn_count"] += 1
-            results["receipts"].append(cherry_res)
-            results["by_protocol"]["Cherry Play"] = results["by_protocol"].get("Cherry Play", 0) + 1
 
         # 8. MexoEarn (>= 1666.67 MXO to Master EVM Vault)
         mexo_res = await withdraw_mexoearn(session, uid, name, tokens)
