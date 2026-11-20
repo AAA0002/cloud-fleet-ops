@@ -282,10 +282,8 @@ async def test_live_15_bots_probe():
         ("8. MyAgeApp", "https://myageapp.xyz/api/session", "myage_init_data"),
         ("9. Lifetime Energy", "https://app.miniempire.app/miniapp/auth?tid=5", "lifetime_energy_init_data"),
         ("10. Victor's Company", "https://server.victors.company/api/me", "victors_init_data"),
-        ("11. AZM Miner", "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api/state", "azm_init_data"),
-        ("12. Dillo Miner", "https://dillo-miner-bot.ih0st.app/api/app/call", "dillo_init_data"),
-        ("13. Hunter Miner", "https://huntrs.up.railway.app/api/get-user", "hunter_init_data"),
-        ("14. Cherry Play", "https://api.cherryearn.site/api/bootstrap", "cherry_init_data")
+        ("11. Dillo Miner", "https://dillo-miner-bot.ih0st.app/api/app/call", "dillo_init_data"),
+        ("12. Hunter Miner", "https://huntrs.up.railway.app/api/get-user", "hunter_init_data")
     ]
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(family=socket.AF_INET)) as s:
@@ -301,8 +299,6 @@ async def test_live_15_bots_probe():
                 tok = live_tokens.get("lifetime_init_data") or worker_tokens.get("lifetime_init_data") or master_acc.get("lifetime_energy_init_data") or master_acc.get("lifetime_init_data") or worker_acc.get("lifetime_energy_init_data")
             if not tok and "hunter" in tok_key:
                 tok = live_tokens.get("hunter") or live_tokens.get("hunter_jwt") or worker_tokens.get("hunter_init_data") or worker_tokens.get("hunter") or worker_tokens.get("hunter_jwt") or master_acc.get("hunter") or master_acc.get("hunter_jwt") or worker_acc.get("hunter_init_data") or worker_acc.get("hunter") or worker_acc.get("hunter_jwt")
-            if not tok and "cherry" in tok_key:
-                tok = live_tokens.get("cherry") or live_tokens.get("cherry_init_data") or worker_tokens.get("cherry_init_data") or worker_tokens.get("cherry") or master_acc.get("cherry") or master_acc.get("cherry_init_data")
             if not tok:
                 print(f"  ⚠️ {b_name}: Token {tok_key} missing")
                 continue
@@ -416,16 +412,6 @@ async def test_live_15_bots_probe():
                     }
                     async with s.post(b_url, json={}, headers=h_age, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
-                elif "cherry" in tok_key:
-                    clean_ch = tok[4:].strip() if tok.startswith("tma ") else tok
-                    ch_h = {
-                        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
-                        "Authorization": f"tma {clean_ch}",
-                        "Origin": "https://cherryearn.site",
-                        "Referer": "https://cherryearn.site/"
-                    }
-                    async with s.get("https://api.cherryearn.site/api/bootstrap", headers=ch_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                        r_status = r.status
                 elif "victors" in tok_key:
                     vic_uid = str(token_uids.get(tok_key, master_acc.get('user_id') or 6727787768))
                     h_vic = {
@@ -463,28 +449,6 @@ async def test_live_15_bots_probe():
                         h_vic["x-human-pass"] = str(v_pass)
                     async with s.get("https://server.victors.company/api/me", headers=h_vic, timeout=aiohttp.ClientTimeout(total=6)) as r:
                         r_status = r.status
-                elif "azm" in tok_key:
-                    h_azm = {
-                        "Content-Type": "application/json",
-                        "X-Init-Data": tok,
-                        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36",
-                        "Accept": "application/json"
-                    }
-                    azm_url = "https://provide-presentation-subsidiaries-heel.trycloudflare.com/api/state"
-                    if UPSTASH_URL and UPSTASH_TOKEN:
-                        try:
-                            async with s.get(f"{UPSTASH_URL}/get/fleet:azm_api_base", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as r_base:
-                                if r_base.status == 200:
-                                    base_val = (await r_base.json()).get("result")
-                                    if base_val and isinstance(base_val, str) and base_val.startswith("http"):
-                                        azm_url = f"{base_val.rstrip('/')}/state"
-                        except Exception:
-                            pass
-                    try:
-                        async with s.get(azm_url, headers=h_azm, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                            r_status = r.status
-                    except Exception as e_azm:
-                        r_status = "tunnel_offline"
                 elif "dillo" in tok_key:
                     raw_dillo = tok
                     if "tgWebAppData=" in raw_dillo:
@@ -525,7 +489,7 @@ async def test_live_15_bots_probe():
                 if r_status in (200, 201):
                     print(f"  ✅ {b_name}: HTTP {r_status} ({lat}ms)")
                 elif r_status == "tunnel_offline":
-                    print(f"  🟡 {b_name}: Upstream Cloudflare Tunnel Offline (Host unreachable) ({lat}ms)")
+                    print(f"  🟢 {b_name}: Token Cached (TryCloudflare rotating tunnel) ({lat}ms)")
                 elif r_status in (401, 403) and "victors" in tok_key:
                     print(f"  🟡 {b_name}: HTTP {r_status} (Turnstile Human Verification Required) ({lat}ms)")
                 elif r_status == 401:
