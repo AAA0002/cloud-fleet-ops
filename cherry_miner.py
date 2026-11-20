@@ -427,26 +427,26 @@ class CherryClient:
 
     async def run_full_farming_cycle(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """Executes the complete Cherry Play harvest cycle for this account."""
-        close_session = False
         if session is None:
-            session = aiohttp.ClientSession()
-            close_session = True
+            async with aiohttp.ClientSession() as s:
+                return await self._run_farming_cycle_impl(s)
+        return await self._run_farming_cycle_impl(session)
 
-        try:
-            report = {
-                "uid": self.uid,
-                "name": self.name,
-                "balance": 0,
-                "tickets": 0,
-                "actions": [],
-                "status": "active"
-            }
+    async def _run_farming_cycle_impl(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
+        report = {
+            "uid": self.uid,
+            "name": self.name,
+            "balance": 0,
+            "tickets": 0,
+            "actions": [],
+            "status": "active"
+        }
 
-            # 1. Bootstrap profile
-            b_data = await self.bootstrap(session)
-            if not b_data or b_data.get("error"):
-                report["status"] = b_data.get("error", "bootstrap_failed") if b_data else "bootstrap_failed"
-                return report
+        # 1. Bootstrap profile
+        b_data = await self.bootstrap(session)
+        if not b_data or b_data.get("error"):
+            report["status"] = b_data.get("error", "bootstrap_failed") if b_data else "bootstrap_failed"
+            return report
 
         report["balance"] = self.balance
         report["tickets"] = self.tickets
@@ -541,9 +541,6 @@ class CherryClient:
         report["tasks_harvested"] = len(claimed_tasks) if 'claimed_tasks' in locals() else 0
         report["success"] = True
         return report
-        finally:
-            if close_session:
-                await session.close()
 
 
 async def harvest_all_cherry_fleet():
