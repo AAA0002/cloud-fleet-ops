@@ -299,30 +299,15 @@ async def sync_tokens_to_edge_and_upstash(session: aiohttp.ClientSession, uid: s
                     }
                 }
             ]
-            if tokens.get("chickenland_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:chickenland_init_data"}, {"type": "text", "value": tokens["chickenland_init_data"]}]
-                    }
-                })
-            if tokens.get("myage_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:myage_init_data"}, {"type": "text", "value": tokens["myage_init_data"]}]
-                    }
-                })
-            if tokens.get("hunter_init_data"):
-                t_reqs.append({
-                    "type": "execute",
-                    "stmt": {
-                        "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
-                        "args": [{"type": "text", "value": f"fleet:tokens:{uid}:hunter_init_data"}, {"type": "text", "value": tokens["hunter_init_data"]}]
-                    }
-                })
+            for tk, tv in tokens.items():
+                if tv and isinstance(tv, str) and len(tv) > 10:
+                    t_reqs.append({
+                        "type": "execute",
+                        "stmt": {
+                            "sql": "INSERT OR REPLACE INTO kv_mesh (key, val, updated_at) VALUES (?, ?, unixepoch())",
+                            "args": [{"type": "text", "value": f"fleet:tokens:{uid}:{tk}"}, {"type": "text", "value": tv}]
+                        }
+                    })
 
             # Also update monolithic miniapp_tokens in Turso
             raw_all_t = turso_get_sync("miniapp_tokens")
