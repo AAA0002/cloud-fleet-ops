@@ -11,7 +11,6 @@ against official, ground-truth payout thresholds:
 2. PepeGram: >= 1,000 PEPE -> Auto-swap to TON & cashout to Master TON Vault
 3. Lifetime Energy: >= 1,000 Energy -> Cashout to Master TON Vault
 4. EarnVault: >= $1.00 USD (100 cents) -> BEP20 USDT cashout to Master EVM Vault
-5. Cherry Play: >= 8,000 🍒 ($0.08 USDT) -> Yield claims & withdrawals to Master TON Vault
 6. MexoEarn: >= 1,666.67 MXO ($0.50 USDT min at 0.0003 rate) -> BEP20 to Master EVM Vault
 7. MyAgeApp: >= 0.5 GRAM (S.withdraw.min = 0.5) -> Cashout to Master TON Vault
 8. Kynex Network: >= 62,500 KNX ($5.00 USD at 0.00008 rate) -> BEP20 to Master EVM Vault
@@ -90,13 +89,6 @@ WITHDRAWAL_THRESHOLDS = {
         "threshold": 5.0,
         "action": "Cashout to BEP20 USDT (min $5.00, Mon-Fri 15-16 UTC)",
         "unit": "USD"
-    },
-    "cherry": {
-        "name": "Cherry Play",
-        "symbol": "CHERRY",
-        "threshold": 8000.0,
-        "action": "Cashout $0.08+ USDT/GRAM via /api/withdraw to TON vault",
-        "unit": "🍒"
     },
     "mexo": {
         "name": "MexoEarn",
@@ -323,36 +315,6 @@ async def audit_single_account(session: aiohttp.ClientSession, acc: Dict[str, An
                     }
                     if is_ready:
                         report["ready_to_withdraw"].append(("lifetime", hashes, "Energy"))
-        except Exception:
-            pass
-
-    # 4. Cherry Play
-    cherry_init = tokens.get("cherry_init_data") or tokens.get("cherry") or tokens.get("cherryplay_init_data")
-    if cherry_init:
-        try:
-            clean_ch = cherry_init[4:].strip() if cherry_init.startswith("tma ") else cherry_init.strip()
-            dev_id = hashlib.sha256(f"cherry_dev_{account_id}".encode()).hexdigest()[:36]
-            h = {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Authorization": f"tma {clean_ch}",
-                "X-Device": dev_id,
-                "Origin": "https://cherryearn.site",
-                "Referer": "https://cherryearn.site/"
-            }
-            async with session.get("https://api.cherryearn.site/api/bootstrap", headers=h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                if r.status in (200, 201):
-                    d = await r.json()
-                    u = d.get("user", {})
-                    balance = float(u.get("balance", 0) or 0)
-                    threshold = WITHDRAWAL_THRESHOLDS["cherry"]["threshold"]
-                    is_ready = balance >= threshold
-                    report["protocols"]["cherry"] = {
-                        "balance": balance, "threshold": threshold, "unit": "🍒",
-                        "ready": is_ready, "pct": min(100.0, round((balance / threshold) * 100, 1))
-                    }
-                    if is_ready:
-                        report["ready_to_withdraw"].append(("cherry", balance, "🍒"))
         except Exception:
             pass
 
