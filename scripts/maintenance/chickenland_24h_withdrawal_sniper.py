@@ -121,6 +121,10 @@ def load_tokens():
                 p_uid = robust_json_loads(raw_uid)
                 if isinstance(p_uid, dict) and p_uid:
                     tokens.setdefault(uid, {}).update(p_uid)
+            # Also fetch dedicated Chicken Land token key from Turso
+            raw_c = turso_get_sync(f"fleet:tokens:{uid}:chickenland_init_data")
+            if raw_c and isinstance(raw_c, str):
+                tokens.setdefault(uid, {})["chickenland_init_data"] = raw_c
     except Exception as e_turso:
         print(f"⚠️ Turso LibSQL token load note: {e_turso}")
 
@@ -147,6 +151,15 @@ def load_tokens():
                     p_t = robust_json_loads(d_t.get("result"))
                     if isinstance(p_t, dict) and p_t:
                         tokens.setdefault(uid, {}).update(p_t)
+            except Exception:
+                pass
+            try:
+                req_c = urllib.request.Request(f"{up_url.rstrip('/')}/get/fleet:tokens:{uid}:chickenland_init_data", headers={"Authorization": f"Bearer {up_token}"})
+                with urllib.request.urlopen(req_c, timeout=4) as resp_c:
+                    d_c = json.loads(resp_c.read().decode())
+                    val_c = d_c.get("result")
+                    if val_c and isinstance(val_c, str):
+                        tokens.setdefault(uid, {})["chickenland_init_data"] = val_c
             except Exception:
                 pass
 
