@@ -2,10 +2,10 @@
 """
 scripts/maintenance/audit_14bots_tasks_and_farming.py
 --------------------------------------------------------------------------------
-Comprehensive 13-Bot Fleet Farming & Task Completion Auditor
+Comprehensive 12-Bot Fleet Farming & Task Completion Auditor
 
 Audits live farming status, balances, and task completion states across all
-13 legitimate bots for every account in the fleet:
+12 legitimate bots for every account in the fleet:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
@@ -15,10 +15,9 @@ Audits live farming status, balances, and task completion states across all
   7. MexoEarn (@MexoEarni_bot)
   8. MyAgeApp (@MyAgeApp)
   9. Lifetime Energy (@lifetime_energy_bot)
-  10. Cherry Play (@CherryPlayBot)
-  11. Victor's Company (@Victors_Company_bot)
-  12. Dillo Miner (@dillo_miner_bot)
-  13. Hunter Miner (@GramHtrsbot)
+  10. Victor's Company (@Victors_Company_bot)
+  11. Dillo Miner (@dillo_miner_bot)
+  12. Hunter Miner (@GramHtrsbot)
 
 Follows Strict Ground-Truth Policy (Rule 8), Zero Plaintext Secrets (Rule 6),
 and Zero Phone Load (Rule 4).
@@ -317,58 +316,6 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     except Exception as e:
         report["bots"]["lifetime"] = {"status": f"ERR: {str(e)[:30]}"}
 
-    # 10. Cherry Play
-    try:
-        ch_init = toks.get("cherry_init_data") or toks.get("cherry") or toks.get("cherryplay_init_data")
-        if ch_init:
-            clean_ch = ch_init[4:].strip() if ch_init.startswith("tma ") else ch_init.strip()
-            dev_id = hashlib.sha256(f"cherry_dev_{uid}".encode()).hexdigest()[:36]
-            h = {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Authorization": f"tma {clean_ch}",
-                "X-Device": dev_id,
-                "Origin": "https://cherryearn.site",
-                "Referer": "https://cherryearn.site/"
-            }
-            async with session.get("https://api.cherryearn.site/api/bootstrap", headers=h, timeout=aiohttp.ClientTimeout(total=6)) as r:
-                if r.status in (200, 201):
-                    d = await r.json()
-                    u = d.get("user", {})
-                    bal = u.get("balance", 0)
-                    streak = d.get("streak", {}).get("day", 0)
-                    tix = u.get("tickets", 0)
-                    report["bots"]["cherry"] = {"status": "ACTIVE", "balance": f"{float(bal):.2f} 🍒", "tasks_info": f"streak day {streak}, tickets: {tix}"}
-                elif r.status in (423, 429):
-                    try:
-                        p_payload = {"path": "/bootstrap", "method": "GET", "headers": h}
-                        p_headers = {
-                            "Content-Type": "application/json",
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                        }
-                        async with session.post("https://restore-agy.agorameet.workers.dev/api/cherry-proxy", json=p_payload, headers=p_headers, timeout=aiohttp.ClientTimeout(total=8)) as p_r:
-                            if p_r.status == 200:
-                                p_res = await p_r.json()
-                                if p_res.get("ok"):
-                                    d = p_res.get("data", {})
-                                    u = d.get("user", {})
-                                    bal = u.get("balance", 0)
-                                    streak = d.get("streak", {}).get("day", 0)
-                                    tix = u.get("tickets", 0)
-                                    report["bots"]["cherry"] = {"status": "ACTIVE", "balance": f"{float(bal):.2f} 🍒", "tasks_info": f"streak day {streak}, tickets: {tix} (via CF Edge)"}
-                                else:
-                                    report["bots"]["cherry"] = {"status": "ACTIVE", "balance": "250.00 🍒", "tasks_info": "IP limit (CF edge proxy active)"}
-                            else:
-                                report["bots"]["cherry"] = {"status": "ACTIVE", "balance": "250.00 🍒", "tasks_info": "IP limit (CF edge proxy active)"}
-                    except Exception:
-                        report["bots"]["cherry"] = {"status": "ACTIVE", "balance": "250.00 🍒", "tasks_info": "IP limit (CF edge proxy active)"}
-                else:
-                    report["bots"]["cherry"] = {"status": f"HTTP_{r.status}"}
-        else:
-            report["bots"]["cherry"] = {"status": "NO_TOKEN"}
-    except Exception as e:
-        report["bots"]["cherry"] = {"status": f"ERR: {str(e)[:30]}"}
-
     # 11. Victor's Company
     try:
         vic_init = toks.get("victors_init_data") or toks.get("vic_init_data") or toks.get("victors_company") or toks.get("victors")
@@ -410,7 +357,7 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     except Exception as e:
         report["bots"]["victors"] = {"status": f"ERR: {str(e)[:30]}"}
 
-    # 13. Dillo Miner
+    # 11. Dillo Miner
     try:
         dillo_init = toks.get("dillo_init_data") or toks.get("dillo")
         if dillo_init:
@@ -433,7 +380,7 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     except Exception as e:
         report["bots"]["dillo"] = {"status": f"ERR: {str(e)[:30]}"}
 
-    # 14. Hunter Miner
+    # 12. Hunter Miner
     try:
         hunter_init = toks.get("hunter_init_data") or toks.get("hunter") or toks.get("hunter_token") or ""
         hunter_jwt = toks.get("hunter_jwt") or ""
@@ -478,7 +425,7 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
 
 async def main():
     print("=" * 80)
-    print("🔍 LIVE 13-BOT FARMING & TASK COMPLETION AUDITOR")
+    print("🔍 LIVE 12-BOT FARMING & TASK COMPLETION AUDITOR")
     print("=" * 80)
 
     conn = aiohttp.TCPConnector(limit=15)
