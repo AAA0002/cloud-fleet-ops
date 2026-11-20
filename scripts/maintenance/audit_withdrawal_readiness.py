@@ -11,7 +11,7 @@ against official, ground-truth payout thresholds:
 2. PepeGram: >= 1,000 PEPE -> Auto-swap to TON & cashout to Master TON Vault
 3. Lifetime Energy: >= 1,000 Energy -> Cashout to Master TON Vault
 4. EarnVault: >= $1.00 USD (100 cents) -> BEP20 USDT cashout to Master EVM Vault
-5. Cherry Play: >= 100 🍒 -> Yield claims & withdrawals to Master TON Vault
+5. Cherry Play: >= 8,000 🍒 ($0.08 USDT) -> Yield claims & withdrawals to Master TON Vault
 6. MexoEarn: >= 1,666.67 MXO ($0.50 USDT min at 0.0003 rate) -> BEP20 to Master EVM Vault
 7. MyAgeApp: >= 0.5 GRAM (S.withdraw.min = 0.5) -> Cashout to Master TON Vault
 8. Kynex Network: >= 62,500 KNX ($5.00 USD at 0.00008 rate) -> BEP20 to Master EVM Vault
@@ -94,8 +94,8 @@ WITHDRAWAL_THRESHOLDS = {
     "cherry": {
         "name": "Cherry Play",
         "symbol": "CHERRY",
-        "threshold": 100.0,
-        "action": "Withdraw CHERRY yields to bound TON wallet",
+        "threshold": 8000.0,
+        "action": "Cashout $0.08+ USDT/GRAM via /api/withdraw to TON vault",
         "unit": "🍒"
     },
     "mexo": {
@@ -215,20 +215,33 @@ def load_accounts() -> List[Dict[str, Any]]:
 
 
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
-    """Retrieve WebApp tokens for account from Upstash Redis."""
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return {}
-    url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    """Retrieve WebApp tokens for account from Upstash Redis with local cache fallback."""
+    if UPSTASH_URL and UPSTASH_TOKEN:
+        url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
+        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    raw = data.get("result")
+                    if raw:
+                        parsed = robust_json_loads(raw)
+                        if parsed:
+                            return parsed
+        except Exception:
+            pass
+
+    # Local file fallback
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                raw = data.get("result")
-                if raw:
-                    return robust_json_loads(raw)
+        local_toks_path = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+        if os.path.exists(local_toks_path):
+            with open(local_toks_path) as f:
+                all_toks = json.load(f)
+                if str(uid) in all_toks:
+                    return all_toks[str(uid)]
     except Exception:
         pass
+
     return {}
 
 
