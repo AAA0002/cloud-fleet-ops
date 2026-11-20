@@ -261,9 +261,8 @@ class HunterClient:
         except Exception:
             pass
 
-        # Stable fingerprint based on account UID
-        import hashlib
-        visitor_hash = hashlib.sha256(f"hunter_device_fp_{self.uid}".encode()).hexdigest()[:32]
+        # Authentic fingerprint matching registered account device
+        visitor_hash = f"fp_{self.uid}_device"
 
         auth_payload = {
             "initData": self.raw_init_data,
@@ -276,13 +275,35 @@ class HunterClient:
         res = self._call_api("/api/auth", auth_payload, auth=False)
         if res.get("token"):
             self.token = res["token"]
-            self.user_data = res.get("user", {})
-            self.mining_data = res.get("mining", {})
-            self.completed_tasks = set(res.get("completedTasks", []))
+            self._update_state(res.get("user", {}), res.get("completedTasks"))
             # Persist 7-day JWT to Upstash Redis
             self._save_jwt_to_redis(res["token"])
             return True
         return False
+
+    def _update_state(self, u: dict, completed_tasks: list = None):
+        """Calculates ground-truth mining lifecycle state from user dict."""
+        self.user_data = u or {}
+        if completed_tasks is not None:
+            self.completed_tasks = set(completed_tasks)
+        now_ms = int(time.time() * 1000)
+        mining_active = bool(self.user_data.get("mining_active"))
+        mining_end = int(self.user_data.get("mining_end_time", 0) or 0)
+        pending_reward = float(self.user_data.get("pending_gram_reward", 0.0) or 0.0)
+
+        is_active_now = mining_active and (mining_end > 0 and now_ms < mining_end)
+        needs_stop = mining_active and (mining_end > 0 and now_ms >= mining_end)
+        can_claim = pending_reward > 0
+        can_start = not mining_active and pending_reward == 0
+
+        self.mining_data = {
+            "mining_active": is_active_now,
+            "needs_stop": needs_stop,
+            "can_claim": can_claim,
+            "can_start_mining": can_start,
+            "pending_reward": pending_reward,
+            "time_remaining": max(0, int((mining_end - now_ms) / 1000)) if is_active_now else 0
+        }
 
     def _save_jwt_to_redis(self, jwt_tok: str):
         if not UPSTASH_URL or not UPSTASH_TOKEN or not jwt_tok:
@@ -301,22 +322,44 @@ class HunterClient:
     def refresh_user(self) -> dict:
         res = self._call_api("/api/get-user", {})
         if res.get("user"):
-            self.user_data = res.get("user", {})
-            self.mining_data = res.get("mining", {})
-            self.completed_tasks = set(res.get("completedTasks", []))
+            self._update_state(res.get("user", {}), res.get("completedTasks"))
         return res
 
     def claim_welcome_bonus(self) -> dict:
-        return self._call_api("/api/claim-welcome-bonus", {})
+        res = self._call_api("/api/claim-welcome-bonus", {})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
+
+    def stop_mining(self) -> dict:
+        res = self._call_api("/api/stop-mining", {})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
 
     def claim_mining(self) -> dict:
-        return self._call_api("/api/claim-mining", {})
+        res = self._call_api("/api/claim-mining", {})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
 
     def start_mining(self) -> dict:
-        return self._call_api("/api/start-mining", {})
+        res = self._call_api("/api/start-mining", {})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
+
+    def claim_quest(self, quest_type: str) -> dict:
+        res = self._call_api("/api/claim-quest", {"questType": quest_type})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
 
     def claim_referral_earnings(self) -> dict:
-        return self._call_api("/api/claim-referral-earnings", {})
+        res = self._call_api("/api/claim-referral-earnings", {})
+        if res.get("user"):
+            self._update_state(res["user"])
+        return res
 
     def get_tasks(self, category: str = "main") -> List[dict]:
         res = self._call_api(f"/api/tasks/{category}", {})
@@ -346,10 +389,17 @@ class HunterClient:
         return res
 
     def withdraw_gram(self, amount: float, wallet_address: str = TARGET_TON_VAULT) -> dict:
-        return self._call_api("/api/withdraw-gram", {
+        payload = {
             "coinAmount": round(float(amount), 4),
             "walletAddress": wallet_address
-        })
+        }
+        if self.uid and str(self.uid).isdigit():
+            payload["userId"] = int(self.uid)
+        if self.username:
+            payload["username"] = self.username
+        if self.name:
+            payload["firstName"] = self.name
+        return self._call_api("/api/withdraw-gram", payload)
 
 def send_alert_card(summary: dict):
     if not REPORT_BOT_TOKEN or not ADMIN_CHANNEL_ID:
@@ -406,16 +456,17 @@ def run_fleet_sweep():
         username = acc.get("username") or ""
         is_master = (uid == MASTER_UID)
 
-        # Look for hunter token
+        # Look for hunter token or cached 7-day JWT
         tok_data = tokens.get(uid, {})
         tok = tok_data.get("hunter_init_data") or tok_data.get("hunter") or tok_data.get("hunter_token")
+        jwt_tok = tok_data.get("hunter_jwt")
         
-        # If no dedicated hunter token yet, we'll mark and continue
-        if not tok:
+        # If neither dedicated hunter token nor JWT exists yet, mark and continue
+        if not tok and not jwt_tok:
             print(f"[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}): 🟡 No Hunter Miner token (pending MTProto collector)")
             continue
 
-        client = HunterClient(uid, name, tok, username=username)
+        client = HunterClient(uid, name, tok or "", username=username, jwt_token=jwt_tok or "")
         ok = client.authenticate()
         if not ok:
             print(f"[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}): ❌ Auth failed ({client.last_proxy_used or 'direct'})")
@@ -424,14 +475,19 @@ def run_fleet_sweep():
         summary["accounts_processed"] += 1
         u_info = client.user_data
         m_info = client.mining_data
-        bal = float(u_info.get("coin_balance", 0.0) or 0.0)
-        summary["total_gram_bal"] += bal
+        wb = float(u_info.get("withdrawable_balance", 0.0) or 0.0)
+        mb = float(u_info.get("mining_balance", 0.0) or 0.0)
+        gb = float(u_info.get("gram_balance", 0.0) or 0.0)
+        cb = float(u_info.get("coin_balance", 0.0) or 0.0)
+        bal = wb if wb > 0 else (cb if cb > 0 else mb)
+        total_bal = wb + mb + gb
+        summary["total_gram_bal"] += (total_bal if total_bal > 0 else bal)
         ref_by = u_info.get("referred_by")
         if ref_by == int(MASTER_UID) or str(ref_by) == MASTER_UID:
             summary["master_referrals"] += 1
 
         print(f"\n[{idx:02d}/{len(accounts)}] 👤 {name} ({uid}{' - 👑 Master' if is_master else ''}):")
-        print(f"   💰 Balance: {bal:.4f} GRAM | Referred by: {ref_by} | Proxy: {bool(client.last_proxy_used)}")
+        print(f"   💰 Balance: {bal:.4f} GRAM (Total: {total_bal:.4f}) | Referred by: {ref_by} | Proxy: {bool(client.last_proxy_used)}")
 
         # 1. Claim Welcome Bonus (+0.20 GRAM)
         if not u_info.get("welcome_bonus_claimed"):
@@ -441,19 +497,28 @@ def run_fleet_sweep():
                 summary["welcome_claimed"] += 1
                 print(f"   🎁 Welcome Bonus CLAIMED: +0.20 GRAM! New Balance: {bal:.4f} GRAM")
 
-        # 2. Claim Finished Mining
+        # 2. Mining Lifecycle: Stop -> Claim -> Start
+        if m_info.get("needs_stop"):
+            stop_res = client.stop_mining()
+            if stop_res.get("success"):
+                m_info = client.mining_data
+                rew = stop_res.get("reward", 0)
+                print(f"   🛑 Finished Mining Session Finalized (+{rew:.4f} GRAM pending)")
+
         if m_info.get("can_claim"):
             cl_res = client.claim_mining()
             if cl_res.get("success"):
-                c_amt = cl_res.get("mined_coins", 0)
+                c_amt = cl_res.get("claimed", 0) or cl_res.get("mined_coins", 0)
                 bal += c_amt
+                m_info = client.mining_data
                 print(f"   ⛏️ Mining Harvested: +{c_amt:.4f} GRAM!")
 
         # 3. Start 12h Mining Session
-        if not m_info.get("mining_active") and m_info.get("can_start_mining", True):
+        if m_info.get("can_start_mining") or (not m_info.get("mining_active") and m_info.get("can_start_mining", True)):
             st_res = client.start_mining()
             if st_res.get("success"):
                 summary["mining_active"] += 1
+                m_info = client.mining_data
                 print(f"   🚀 12-Hour Mining Session ACTIVATED!")
         elif m_info.get("mining_active"):
             summary["mining_active"] += 1
@@ -466,6 +531,15 @@ def run_fleet_sweep():
                 claimed = ref_res.get("claimed_amount", 0)
                 bal += claimed
                 print(f"   👥 Master Referral Earnings CLAIMED: +{claimed:.4f} GRAM!")
+
+        # 4.5 Claim Quests (task, referral, miner)
+        for q_type in ["task", "referral", "miner"]:
+            try:
+                q_res = client.claim_quest(q_type)
+                if q_res.get("success"):
+                    print(f"   🏆 Quest Claimed ({q_type})!")
+            except Exception:
+                pass
 
         # 5. Sweep dynamic tasks
         for cat in ["community", "partner", "main"]:
@@ -483,12 +557,13 @@ def run_fleet_sweep():
             except Exception:
                 pass
 
-        # 6. Automatic Withdrawal to TON Vault
-        if bal >= 0.05:
-            wd_res = client.withdraw_gram(bal, TARGET_TON_VAULT)
+        # 6. Automatic Withdrawal to TON Vault (Upstream minimum: 0.50 GRAM)
+        claimable_withdraw = wb if wb >= 0.50 else (bal if bal >= 0.50 and not m_info.get("mining_active") else 0.0)
+        if claimable_withdraw >= 0.50:
+            wd_res = client.withdraw_gram(claimable_withdraw, TARGET_TON_VAULT)
             if wd_res.get("success"):
                 summary["withdrawals_dispatched"] += 1
-                print(f"   🚀 ON-CHAIN WITHDRAWAL DISPATCHED: {bal:.4f} GRAM -> {TARGET_TON_VAULT[:10]}... (Tx: {wd_res.get('transaction_id')})")
+                print(f"   🚀 ON-CHAIN WITHDRAWAL DISPATCHED: {claimable_withdraw:.4f} GRAM -> {TARGET_TON_VAULT[:10]}... (Tx: {wd_res.get('transaction_id')})")
             else:
                 print(f"   ℹ️ Withdrawal response: {wd_res.get('error') or wd_res}")
 
