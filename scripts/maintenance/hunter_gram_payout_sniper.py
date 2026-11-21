@@ -142,32 +142,99 @@ def check_and_snipe_account(acc: dict, tok_dict: dict):
         start_res = client.start_mining()
         logger.info(f"[{name}] Mining Restarted: {start_res}")
 
+def load_fleet_data():
+    """Loads accounts and tokens from local JSON or Turso LibSQL SSOT fallback."""
+    accounts = []
+    tokens = {}
+    
+    tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+    acc_file = os.path.join(BASE_DIR, "accounts.json")
+
+    if os.path.exists(acc_file):
+        try:
+            with open(acc_file, "r") as f:
+                accounts = json.load(f)
+        except Exception:
+            pass
+
+    if os.path.exists(tok_file):
+        try:
+            with open(tok_file, "r") as f:
+                tokens = json.load(f)
+        except Exception:
+            pass
+
+    # Turso LibSQL Fallback for Cloud Runners
+    if not accounts or len(accounts) < 20 or not tokens:
+        try:
+            from turso_mesh import turso_get
+            if not accounts or len(accounts) < 20:
+                acc_raw = turso_get("fleet:accounts") or turso_get("fleet:live_state")
+                if acc_raw:
+                    if isinstance(acc_raw, str):
+                        acc_data = json.loads(acc_raw)
+                    else:
+                        acc_data = acc_raw
+                    while isinstance(acc_data, str):
+                        acc_data = json.loads(acc_data)
+                    if isinstance(acc_data, dict) and "accounts" in acc_data:
+                        accounts = acc_data["accounts"]
+                    elif isinstance(acc_data, list):
+                        accounts = acc_data
+
+            if not tokens:
+                tok_raw = turso_get("miniapp_tokens") or turso_get("fleet:tokens_state")
+                if tok_raw:
+                    if isinstance(tok_raw, str):
+                        tokens = json.loads(tok_raw)
+                    else:
+                        tokens = tok_raw
+                    while isinstance(tokens, str):
+                        tokens = json.loads(tokens)
+        except Exception as e:
+            logger.debug(f"Turso fallback load note: {e}")
+
+    return accounts, tokens
+
+def run_hunter_payout_sweep(accounts=None, tokens=None):
+    """Runs a single pass across all fleet accounts checking balances and initiating payouts."""
+    if accounts is None or tokens is None:
+        l_accs, l_toks = load_fleet_data()
+        accounts = accounts or l_accs
+        tokens = tokens or l_toks
+
+    if not accounts:
+        logger.warning("No accounts available for Hunter Miner sweep")
+        return []
+
+    results = []
+    # Check Master Account first
+    master_acc = accounts[0]
+    m_uid = str(master_acc.get("user_id") or master_acc.get("id"))
+    res_m = check_and_snipe_account(master_acc, tokens.get(m_uid, {}))
+    if res_m:
+        results.append(res_m)
+
+    # Check worker accounts
+    for acc in accounts[1:]:
+        uid = str(acc.get("user_id") or acc.get("id"))
+        res_w = check_and_snipe_account(acc, tokens.get(uid, {}))
+        if res_w:
+            results.append(res_w)
+
+    return results
+
 def main():
     logger.info("=" * 75)
     logger.info("🎯 HUNTER MINER CASHOUT SNIPER & MINING SESSION WATCHER")
     logger.info(f"Target Vault: {TARGET_TON_VAULT}")
     logger.info("=" * 75)
 
-    tok_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
-    acc_file = os.path.join(BASE_DIR, "accounts.json")
-
-    with open(tok_file, "r") as f:
-        tokens = json.load(f)
-    with open(acc_file, "r") as f:
-        accounts = json.load(f)
-
+    accounts, tokens = load_fleet_data()
     watch_mode = "--watch" in sys.argv
 
     while True:
-        # Check Master Account first
-        master_acc = accounts[0]
-        m_uid = str(master_acc["user_id"])
-        check_and_snipe_account(master_acc, tokens.get(m_uid, {}))
-
-        # Check worker accounts
-        for acc in accounts[1:]:
-            uid = str(acc["user_id"])
-            check_and_snipe_account(acc, tokens.get(uid, {}))
+        run_hunter_payout_sweep(accounts, tokens)
 
         if not watch_mode:
             break
