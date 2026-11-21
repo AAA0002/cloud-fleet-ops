@@ -1215,18 +1215,19 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
         # 6.5. Autonomous Promo Code Discovery & Redemption (@ChickenLandCodes)
         try:
             from chickenland_promo_sniper import (
-                fetch_channel_codes, redis_command,
+                fetch_channel_codes,
                 is_code_exhausted, mark_code_exhausted, EXHAUSTED_CODES
             )
+            from turso_mesh import turso_sismember, turso_sadd
             c_codes = await asyncio.to_thread(fetch_channel_codes)
             for it in c_codes:
                 p_code = it.get("code")
                 if not p_code or it.get("is_exhausted") or p_code in EXHAUSTED_CODES or is_code_exhausted(p_code):
                     continue
-                # Check if this specific account already claimed this code
+                # Check if this specific account already claimed this code in Turso LibSQL SSOT
                 if uid:
-                    already = redis_command("SISMEMBER", f"chickenland:claimed:{uid}", p_code)
-                    if already == 1:
+                    already = turso_sismember(f"chickenland:claimed:{uid}", p_code)
+                    if already:
                         continue
                 p_res = await rpc("/api/promo", {"code": p_code})
                 desc = str(p_res.get("description", "")).lower()
@@ -1236,12 +1237,12 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                     res["tasks_claimed"] += 1
                     res["notes"].append(f"promo_{p_code}_+{p_coins}")
                     if uid:
-                        redis_command("SADD", f"chickenland:claimed:{uid}", p_code)
+                        turso_sadd(f"chickenland:claimed:{uid}", p_code)
                     if p_res.get("result", {}).get("user"):
                         current_coins = float(p_res["result"]["user"].get("coins", current_coins))
                 elif "already" in desc or "claimed" in desc or param_code == "ALREADY_CLAIMED":
                     if uid:
-                        redis_command("SADD", f"chickenland:claimed:{uid}", p_code)
+                        turso_sadd(f"chickenland:claimed:{uid}", p_code)
                 elif param_code in ("PROMO_USED", "PROMO_FULL", "PROMO_EXPIRED", "PROMO_BAD") or "expired" in desc or "limit" in desc or "exhaust" in desc:
                     mark_code_exhausted(p_code)
                     EXHAUSTED_CODES.add(p_code)
@@ -1286,13 +1287,32 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
             res["notes"].append(f"ref_coins_{ref_amt}")
             current_coins += ref_amt
 
-        # 8. Buy hens if coins >= 1000 (Fleet-wide, including Master Account)
-        if current_coins >= 1000:
-            n_buy = int(current_coins // 1000)
-            buy_res = await rpc("/api/buy", {"breed": "basic", "n": n_buy})
+        # 7.5. Autonomous Egg Compounding for Worker Accounts (Converts eggs -> coins with +20% bonus)
+        egg_bal = int(u_info.get("eggs", 0) or 0)
+        if uid != MASTER_UID and egg_bal >= 1000:
+            try:
+                reinvest_qty = (egg_bal // 1000) * 1000
+                r_resp = await rpc("/api/reinvest", {"eggs": reinvest_qty})
+                if r_resp.get("ok"):
+                    res["notes"].append(f"eggs_reinvested_{reinvest_qty}_+20%")
+                    if r_resp.get("result", {}).get("user"):
+                        current_coins = float(r_resp["result"]["user"].get("coins", current_coins))
+            except Exception as r_ex:
+                logger.debug(f"[{name}] Egg reinvest note: {r_ex}")
+
+        # 8. Buy hens (compounds egg production while maintaining 500 coin liquidity reserve for daily tasks)
+        if current_coins >= 1500:
+            n_buy = min(int((current_coins - 500) // 1000), 10)
+            if n_buy > 0:
+                buy_res = await rpc("/api/buy", {"breed": "basic", "n": n_buy})
+                if buy_res.get("ok"):
+                    res["notes"].append(f"hens_bought_{n_buy}")
+                    current_coins -= (n_buy * 1000)
+        elif current_coins >= 1000 and uid != MASTER_UID:
+            buy_res = await rpc("/api/buy", {"breed": "basic", "n": 1})
             if buy_res.get("ok"):
-                res["notes"].append(f"hens_bought_{n_buy}")
-                current_coins -= (n_buy * 1000)
+                res["notes"].append("hens_bought_1")
+                current_coins -= 1000
 
         # 9. Upgrade basket if affordable (Fleet-wide)
         try:
@@ -2651,6 +2671,19 @@ async def main():
         dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
         hntr_tot = sum(r["results"].get("hunter", {}).get("tasks_claimed", 0) for r in reports)
         elapsed = time.time() - t_start
+
+        # Autonomous Post-Sweep Payout & TGE Snipers Check
+        try:
+            from scripts.maintenance.kynex_tge_withdrawal_sniper import check_and_run_kynex_sniper
+            await check_and_run_kynex_sniper(session, ACCOUNTS, all_tokens)
+        except Exception as k_ex:
+            logger.debug(f"Kynex TGE check note: {k_ex}")
+
+        try:
+            from scripts.maintenance.hunter_gram_payout_sniper import run_hunter_payout_sweep
+            await asyncio.to_thread(run_hunter_payout_sweep, ACCOUNTS, all_tokens)
+        except Exception as h_ex:
+            logger.debug(f"Hunter payout sweep note: {h_ex}")
 
         if bot_token and notif_channel:
             short_card = (
