@@ -200,16 +200,16 @@ async def record_payout_receipt(protocol: str, symbol: str, amount: float, recip
         try:
             url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
             text = (
-                f"💳 <b>AUTOMATED FLEET PAYOUT RECEIPT</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Protocol:</b> <code>{protocol}</code>\n"
-                f"• <b>Account:</b> <code>{name}</code> (<code>{uid}</code>)\n"
-                f"• <b>Payout Amount:</b> <b>+{amount:,.4f} {symbol}</b> ✅\n"
-                f"• <b>Vault Destination:</b> <code>{recipient}</code>\n"
-                f"• <b>Date (UTC):</b> <code>{date_str}</code>\n"
-                f"• <b>Status:</b> 🟢 <code>CONFIRMED & HARVESTED</code>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"<i>AAA AUTO Autonomous Treasury: Universal Multi-Chain Auto-Withdrawal Active</i>"
+                f"💳 <b>AUTOMATED FLEET PAYOUT RECEIPT</b> 💎\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• 🌐 <b>Protocol:</b> <code>{protocol}</code>\n"
+                f"• 👤 <b>Account:</b> <code>{name}</code> (<code>{uid}</code>)\n"
+                f"• 💰 <b>Payout Amount:</b> <b>+{amount:,.4f} {symbol}</b> ✅\n"
+                f"• 🏦 <b>Vault Destination:</b> <code>{recipient}</code>\n"
+                f"• 🕒 <b>Timestamp:</b> <code>{date_str}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🟢 <b>Status:</b> <code>CONFIRMED & HARVESTED ON-CHAIN</code>\n"
+                f"🛡️ <i>AAA AUTO Treasury: Universal Multi-Chain Autonomous Cashout Active</i>"
             )
             async with aiohttp.ClientSession() as s:
                 await s.post(url, json={"chat_id": PAYOUT_CHANNEL_ID, "text": text, "parse_mode": "HTML"}, timeout=aiohttp.ClientTimeout(total=8))
