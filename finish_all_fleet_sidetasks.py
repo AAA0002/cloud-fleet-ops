@@ -486,7 +486,10 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                                     if isinstance(utoks, dict):
                                         for tk, tv in utoks.items():
                                             if tv:
-                                                if tk not in acc_dict:
+                                                if tk == "levygame" and isinstance(tv, dict) and tv.get("init_data"):
+                                                    acc_dict["levygame_init_data"] = tv["init_data"]
+                                                    acc_dict["levygame"] = tv
+                                                elif tk not in acc_dict:
                                                     acc_dict[tk] = tv
                                                 elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(acc_dict.get(tk)):
                                                     acc_dict[tk] = tv
@@ -533,8 +536,12 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                         if isinstance(f_toks, dict):
                             existing = tokens_db.setdefault(str(uid), {})
                             for tk, tv in f_toks.items():
-                                if tv and (tk not in existing or extract_auth_date(tv) >= extract_auth_date(existing.get(tk))):
-                                    existing[tk] = tv
+                                if tv:
+                                    if tk == "levygame" and isinstance(tv, dict) and tv.get("init_data"):
+                                        existing["levygame_init_data"] = tv["init_data"]
+                                        existing["levygame"] = tv
+                                    elif tk not in existing or extract_auth_date(tv) >= extract_auth_date(existing.get(tk)):
+                                        existing[tk] = tv
         except Exception:
             pass
 
@@ -687,8 +694,8 @@ async def sweep_atf_tasks(session: aiohttp.ClientSession, uid: str, name: str, a
                 pass
     
             # 5. Cooldown & One-Time Tasks
-            completed_tasks = set(log_data.get("user", {}).get("completed_tasks", []))
-            task_cooldowns = log_data.get("task_cooldowns", {})
+            completed_tasks = set((log_data.get("user") or {}).get("completed_tasks", [])) if isinstance(log_data, dict) else set()
+            task_cooldowns = (log_data.get("task_cooldowns") or {}) if isinstance(log_data, dict) else {}
             now_sec = int(time.time())
             atf_tasks = [
                 {"id": "telegram_join", "repeatable": False, "min_s": 10},
@@ -1540,7 +1547,7 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                 if st_d.get("ok"):
                                     started.append(code)
                     if started:
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(15.5)
                         for code in started:
                             async with session.post(f"https://mexoearn.xyz/api/ad-networks/{code}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=5)) as cl_r:
                                 if cl_r.status == 200:
@@ -2009,6 +2016,26 @@ async def sweep_lifetime_tasks(session: aiohttp.ClientSession, uid: str, name: s
                                 res["level"] = int(cd["new_power"])
             except Exception:
                 pass
+
+        # Dynamic task discovery & claims (MiniEmpire tid=5)
+        await jitter(0.3, 0.6)
+        try:
+            async with session.get(f"https://app.miniempire.app/miniapp/tasks?initData={urllib.parse.quote(init_data)}&tid=5", headers=h, timeout=aiohttp.ClientTimeout(total=6)) as tr:
+                if tr.status == 200:
+                    t_d = await tr.json()
+                    for tk in (t_d.get("tasks", []) if isinstance(t_d, dict) else []):
+                        tk_id = tk.get("id")
+                        is_done = tk.get("completed")
+                        is_eligible = tk.get("eligible")
+                        if tk_id and not is_done and (not tk.get("pending") or is_eligible):
+                            await jitter(0.3, 0.6)
+                            async with session.post(f"https://app.miniempire.app/miniapp/tasks/claim?tid=5", json={"initData": init_data, "tid": 5, "task_id": tk_id, "taskId": tk_id}, headers=h, timeout=aiohttp.ClientTimeout(total=5)) as cr:
+                                if cr.status in (200, 201):
+                                    res["tasks_claimed"] += 1
+                                    res["notes"].append(f"task_{tk_id}")
+        except Exception:
+            pass
+
         if uid == MASTER_UID:
             for it in ["invite_1", "invite_5", "invite_25"]:
                 try:
@@ -2479,6 +2506,55 @@ async def sweep_hunter_tasks(session: aiohttp.ClientSession, uid: str, name: str
     return await asyncio.to_thread(_sync_sweep_hunter, uid, name, hunter_init, acc)
 
 
+def _sync_sweep_levygame(uid: str, name: str, init_data: str, acc: dict) -> Dict[str, Any]:
+    """Synchronous execution of LEVY Game daily operations via LevyWire engine."""
+    res = {"bot": "LEVY Game", "tasks_claimed": 0, "notes": [], "success": False, "balance": 0.0}
+    try:
+        from levygame_miner import run_levy_sweep
+        sweep_d = run_levy_sweep(init_data)
+        if sweep_d.get("ok"):
+            res["success"] = True
+            state = sweep_d.get("state") or {}
+            bal = float(state.get("levy", 0) or 0)
+            cash = float(state.get("cash", 0) or 0)
+            res["balance"] = bal
+            res["cash"] = cash
+            if sweep_d.get("spin"):
+                res["tasks_claimed"] += 1
+                res["notes"].append("spin_claimed")
+            if sweep_d.get("offline"):
+                res["tasks_claimed"] += 1
+                res["notes"].append("offline_claimed")
+            if state.get("wallet"):
+                res["notes"].append("ton_wallet_bound")
+        else:
+            res["notes"].append(f"err: {str(sweep_d.get('error', 'unknown'))[:30]}")
+    except Exception as e:
+        res["notes"].append(f"err: {str(e)[:30]}")
+    return res
+
+
+async def sweep_levygame_tasks(session: aiohttp.ClientSession, uid: str, name: str, levy_init: str, acc: dict) -> Dict[str, Any]:
+    """Sweeps LEVY Game (@LevyGame) daily spin, offline earnings, and tasks."""
+    # STRICT BAN SHIELD: Never connect to LEVY Game on Master Account
+    if str(uid) == MASTER_UID or str(uid) == "6727787768":
+        return {
+            "bot": "LEVY Game",
+            "tasks_claimed": 0,
+            "notes": ["master_shielded_zero_cloud_access"],
+            "success": True,
+            "balance": 0.0
+        }
+    if not levy_init:
+        lg_entry = acc.get("levygame")
+        if isinstance(lg_entry, dict) and lg_entry.get("init_data"):
+            levy_init = lg_entry["init_data"]
+    if not levy_init:
+        return {"bot": "LEVY Game", "tasks_claimed": 0, "notes": ["no_init_data"], "success": False, "balance": 0.0}
+
+    return await asyncio.to_thread(_sync_sweep_levygame, uid, name, levy_init, acc)
+
+
 # =============================================================================
 # 3. MAIN RUNNER (23-ACCOUNT PARALLEL PIPELINE)
 # =============================================================================
@@ -2512,72 +2588,78 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         # 1. ATF Miner
         atf_res = await sweep_atf_tasks(session, uid, name, merged_toks.get("atf_init_data", ""), merged_toks)
         account_report["results"]["atf"] = atf_res
-        logger.info(f"[{name}] (1/12) 🪙 ATF Miner: {atf_res.get('tasks_claimed', 0)} claimed ({', '.join(atf_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (1/13) 🪙 ATF Miner: {atf_res.get('tasks_claimed', 0)} claimed ({', '.join(atf_res.get('notes', [])[:2]) or 'ok'})")
 
         # 2. Kynex Network
         kynex_res = await sweep_kynex_tasks(session, uid, name, merged_toks.get("kynex_init_data", ""), merged_toks)
         account_report["results"]["kynex"] = kynex_res
-        logger.info(f"[{name}] (2/12) 🌐 Kynex Network: {kynex_res.get('tasks_claimed', 0)} claimed ({', '.join(kynex_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (2/13) 🌐 Kynex Network: {kynex_res.get('tasks_claimed', 0)} claimed ({', '.join(kynex_res.get('notes', [])[:2]) or 'ok'})")
 
         # 3. PepeGram
         pepe_init = merged_toks.get("pepegram_init_data") or merged_toks.get("pepe_init_data", "")
         pepe_res = await sweep_pepegram_tasks(session, uid, name, pepe_init, merged_toks)
         account_report["results"]["pepegram"] = pepe_res
-        logger.info(f"[{name}] (3/12) 🐸 PepeGram: {pepe_res.get('tasks_claimed', 0)} claimed ({', '.join(pepe_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (3/13) 🐸 PepeGram: {pepe_res.get('tasks_claimed', 0)} claimed ({', '.join(pepe_res.get('notes', [])[:2]) or 'ok'})")
 
         # 4. AdxEarn AI
         adx_init = merged_toks.get("adxearn_init_data") or merged_toks.get("adx_init_data", "")
         adx_res = await sweep_adxearn_tasks(session, uid, name, adx_init, merged_toks)
         account_report["results"]["adxearn"] = adx_res
-        logger.info(f"[{name}] (4/12) 🤖 AdxEarn AI: {adx_res.get('tasks_claimed', 0)} claimed ({', '.join(adx_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (4/13) 🤖 AdxEarn AI: {adx_res.get('tasks_claimed', 0)} claimed ({', '.join(adx_res.get('notes', [])[:2]) or 'ok'})")
 
         # 5. Chicken Land
         chk_init = merged_toks.get("chickenland_init_data") or merged_toks.get("chicken_init_data", "")
         chicken_res = await sweep_chickenland_tasks(session, uid, name, chk_init, merged_toks)
         account_report["results"]["chickenland"] = chicken_res
-        logger.info(f"[{name}] (5/12) 🐔 Chicken Land: {chicken_res.get('tasks_claimed', 0)} claimed ({', '.join(chicken_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (5/13) 🐔 Chicken Land: {chicken_res.get('tasks_claimed', 0)} claimed ({', '.join(chicken_res.get('notes', [])[:2]) or 'ok'})")
 
         # 6. EarnVault
         ev_init = merged_toks.get("earnvault_init_data", "")
         ev_res = await sweep_earnvault_tasks(session, uid, name, ev_init, merged_toks)
         account_report["results"]["earnvault"] = ev_res
-        logger.info(f"[{name}] (6/12) 🏦 EarnVault: {ev_res.get('tasks_claimed', 0)} claimed ({', '.join(ev_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (6/13) 🏦 EarnVault: {ev_res.get('tasks_claimed', 0)} claimed ({', '.join(ev_res.get('notes', [])[:2]) or 'ok'})")
 
         # 7. MexoEarn
         mx_tok = merged_toks.get("mexo_token") or merged_toks.get("mexo_init_data", "")
         mexo_res = await sweep_mexoearn_tasks(session, uid, name, mx_tok, merged_toks)
         account_report["results"]["mexoearn"] = mexo_res
-        logger.info(f"[{name}] (7/12) ⚡ MexoEarn: {mexo_res.get('tasks_claimed', 0)} claimed ({', '.join(mexo_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (7/13) ⚡ MexoEarn: {mexo_res.get('tasks_claimed', 0)} claimed ({', '.join(mexo_res.get('notes', [])[:2]) or 'ok'})")
 
         # 8. MyAgeApp
         age_init = merged_toks.get("myage_init_data", "")
         age_res = await sweep_myage_tasks(session, uid, name, age_init, merged_toks)
         account_report["results"]["myage"] = age_res
-        logger.info(f"[{name}] (8/12) 🎂 MyAgeApp: {age_res.get('tasks_claimed', 0)} claimed ({', '.join(age_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (8/13) 🎂 MyAgeApp: {age_res.get('tasks_claimed', 0)} claimed ({', '.join(age_res.get('notes', [])[:2]) or 'ok'})")
 
         # 9. Lifetime Energy
         le_init = merged_toks.get("lifetime_energy_init_data") or merged_toks.get("lifetime_init_data", "")
         le_res = await sweep_lifetime_tasks(session, uid, name, le_init, merged_toks)
         account_report["results"]["lifetime"] = le_res
-        logger.info(f"[{name}] (9/12) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (9/13) 🔋 Lifetime Energy: {le_res.get('tasks_claimed', 0)} claimed ({', '.join(le_res.get('notes', [])[:2]) or 'ok'})")
 
         # 10. Victor's Company
         vic_init = merged_toks.get("victors_init_data") or merged_toks.get("victors_company_init_data", "")
         vic_res = await sweep_victors_tasks(session, uid, name, vic_init, merged_toks)
         account_report["results"]["victors"] = vic_res
-        logger.info(f"[{name}] (10/12) 🏢 Victor's Company: {vic_res.get('tasks_claimed', 0)} claimed ({', '.join(vic_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (10/13) 🏢 Victor's Company: {vic_res.get('tasks_claimed', 0)} claimed ({', '.join(vic_res.get('notes', [])[:2]) or 'ok'})")
 
         # 11. Dillo Miner (@dillo_miner_bot)
         dillo_init = merged_toks.get("dillo_init_data") or merged_toks.get("dillo") or ""
         dillo_res = await sweep_dillo_tasks(session, uid, name, dillo_init, merged_toks)
         account_report["results"]["dillo"] = dillo_res
-        logger.info(f"[{name}] (11/12) ⛏️ Dillo Miner: {dillo_res.get('tasks_claimed', 0)} claimed ({', '.join(dillo_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (11/13) ⛏️ Dillo Miner: {dillo_res.get('tasks_claimed', 0)} claimed ({', '.join(dillo_res.get('notes', [])[:2]) or 'ok'})")
 
         # 12. Hunter Miner (@GramHtrsbot)
         hunter_init = merged_toks.get("hunter_init_data") or merged_toks.get("hunter") or merged_toks.get("hunter_token") or ""
         hunter_res = await sweep_hunter_tasks(session, uid, name, hunter_init, merged_toks)
         account_report["results"]["hunter"] = hunter_res
-        logger.info(f"[{name}] (12/12) 🎯 Hunter Miner: {hunter_res.get('tasks_claimed', 0)} claimed ({', '.join(hunter_res.get('notes', [])[:2]) or 'ok'})")
+        logger.info(f"[{name}] (12/13) 🎯 Hunter Miner: {hunter_res.get('tasks_claimed', 0)} claimed ({', '.join(hunter_res.get('notes', [])[:2]) or 'ok'})")
+
+        # 13. LEVY Game (@LevyGame)
+        levy_init = merged_toks.get("levygame_init_data") or (merged_toks.get("levygame", {}).get("init_data") if isinstance(merged_toks.get("levygame"), dict) else (merged_toks.get("levygame") if isinstance(merged_toks.get("levygame"), str) else ""))
+        levy_res = await sweep_levygame_tasks(session, uid, name, levy_init, merged_toks)
+        account_report["results"]["levygame"] = levy_res
+        logger.info(f"[{name}] (13/13) 🎮 LEVY Game: {levy_res.get('tasks_claimed', 0)} claimed ({', '.join(levy_res.get('notes', [])[:2]) or 'ok'})")
 
         # Propagate newly acquired JWT / refresh tokens to merged_toks and persistent cloud stores
         if merged_toks.get("hunter_jwt"):
@@ -2613,7 +2695,7 @@ async def main():
                 pass
 
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 12-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2629,7 +2711,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 12-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
+        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2647,9 +2729,10 @@ async def main():
             vic_cl = res.get("victors", {}).get("tasks_claimed", 0)
             dillo_cl = res.get("dillo", {}).get("tasks_claimed", 0)
             hntr_cl = res.get("hunter", {}).get("tasks_claimed", 0)
-            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + vic_cl + dillo_cl + hntr_cl
+            levy_cl = res.get("levygame", {}).get("tasks_claimed", 0)
+            acc_total = atf_cl + kyn_cl + pep_cl + adx_cl + chk_cl + ev_cl + mxo_cl + age_cl + life_cl + vic_cl + dillo_cl + hntr_cl + levy_cl
             total_tasks += acc_total
-            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} VIC:{vic_cl} DIL:{dillo_cl} HNT:{hntr_cl} | Tot: {acc_total}")
+            logger.info(f"• {acc_name:<25} | ATF:{atf_cl} KYN:{kyn_cl} PEP:{pep_cl} ADX:{adx_cl} CHK:{chk_cl} EV:{ev_cl} MXO:{mxo_cl} AGE:{age_cl} WATT:{life_cl} VIC:{vic_cl} DIL:{dillo_cl} HNT:{hntr_cl} LVY:{levy_cl} | Tot: {acc_total}")
 
         logger.info("=" * 80)
         logger.info(f"🏁 GRAND TOTAL SIDE-TASKS/REWARDS CLAIMED: {total_tasks}")
@@ -2670,6 +2753,7 @@ async def main():
         vic_tot = sum(r["results"].get("victors", {}).get("tasks_claimed", 0) for r in reports)
         dillo_tot = sum(r["results"].get("dillo", {}).get("tasks_claimed", 0) for r in reports)
         hntr_tot = sum(r["results"].get("hunter", {}).get("tasks_claimed", 0) for r in reports)
+        levy_tot = sum(r["results"].get("levygame", {}).get("tasks_claimed", 0) for r in reports)
         elapsed = time.time() - t_start
 
         # Autonomous Post-Sweep Payout & TGE Snipers Check
@@ -2687,7 +2771,7 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"🚀 <b>AAA AUTO — 12-BOT HARVEST & REVENUE SUMMARY</b> 💎\n"
+                f"🚀 <b>AAA AUTO — 13-BOT HARVEST & REVENUE SUMMARY</b> 💎\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"👥 <b>Fleet Accounts:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code> 🟢\n"
                 f"🎯 <b>Total Tasks & Yields:</b> <b>{total_tasks} Claimed</b> ✅\n"
@@ -2698,8 +2782,9 @@ async def main():
                 f"⚡ <b>Tasks & Yield Compounding (4):</b>\n"
                 f"• 🐔 <b>Chicken Land:</b> <code>+{chk_tot}</code> • 🤖 <b>AdxEarn:</b> <code>+{adx_tot}</code>\n"
                 f"• ⚡ <b>MexoEarn:</b> <code>+{mxo_tot}</code> • 🎂 <b>MyAgeApp:</b> <code>+{age_tot}</code>\n\n"
-                f"🏦 <b>Treasury & Commercial Yield (3):</b>\n"
-                f"• 🏦 <b>EarnVault:</b> <code>+{ev_tot}</code> • 🔋 <b>Lifetime:</b> <code>+{life_tot}</code> • 🏢 <b>Victor's:</b> <code>+{vic_tot}</code>\n"
+                f"🏦 <b>Treasury & Commercial Yield (4):</b>\n"
+                f"• 🏦 <b>EarnVault:</b> <code>+{ev_tot}</code> • 🔋 <b>Lifetime:</b> <code>+{life_tot}</code>\n"
+                f"• 🏢 <b>Victor's:</b> <code>+{vic_tot}</code> • 🎮 <b>LEVY Game:</b> <code>+{levy_tot}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🛡️ <b>Runner Node:</b> <code>GitHub Actions Headless Cloud & Edge Mesh</code>\n"
                 f"📊 <b>Telemetry:</b> <code>100% Ground-Truth Verified (Turso LibSQL SSOT)</code>"
