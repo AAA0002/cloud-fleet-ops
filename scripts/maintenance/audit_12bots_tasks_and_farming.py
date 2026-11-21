@@ -467,6 +467,23 @@ async def audit_account_12bots(session: aiohttp.ClientSession, uid: str, name: s
     except Exception as e:
         report["bots"]["hunter"] = {"status": f"ERR: {str(e)[:30]}"}
 
+    # 13. LEVY Game
+    try:
+        lg_data = toks.get("levygame") or {}
+        if isinstance(lg_data, dict) and lg_data.get("init_data"):
+            bal = lg_data.get("levy", 0)
+            cash = lg_data.get("cash", 0)
+            wal = lg_data.get("wallet", "")
+            report["bots"]["levygame"] = {
+                "status": "ACTIVE",
+                "balance": f"{bal} LEVY ({cash} cash)",
+                "tasks_info": f"wallet: {'bound' if wal else 'none'}, ref: {lg_data.get('referral_bound', 'none')}"
+            }
+        else:
+            report["bots"]["levygame"] = {"status": "NO_TOKEN"}
+    except Exception as e:
+        report["bots"]["levygame"] = {"status": f"ERR: {str(e)[:30]}"}
+
     return report
 
 async def main():
@@ -532,7 +549,7 @@ async def main():
             "atf": 0.0, "kynex": 0.0, "pepe": 0.0, "adx": 0.0,
             "chicken_coins": 0, "chicken_eggs": 0, "earnvault": 0.0,
             "mexo": 0.0, "myage": 0.0, "lifetime": 0.0, "victors": 0.0,
-            "dillo": 0.0, "hunter": 0.0
+            "dillo": 0.0, "hunter": 0.0, "levygame": 0.0
         }
         import re
         for uid, rep in all_reports.items():
@@ -579,6 +596,9 @@ async def main():
                 elif b_name == "hunter":
                     m = re.search(r"Total:\s*([\d\.]+)", bal) or re.search(r"([\d\.]+)\s*GRAM", bal)
                     if m: totals["hunter"] += float(m.group(1))
+                elif b_name == "levygame":
+                    m = re.search(r"(\d+)\s*LEVY", bal)
+                    if m: totals["levygame"] += float(m.group(1))
 
         print("=" * 80)
         print("📊 12-BOT FLEET TREASURY TOTALS AUDIT SUMMARY")
@@ -595,6 +615,7 @@ async def main():
         print(f"  🏢 Victor's Company : {totals['victors']:,.2f} VICX")
         print(f"  ⛏️ Dillo Miner      : {totals['dillo']:,.1f} DILLO")
         print(f"  🎯 Hunter Miner     : {totals['hunter']:.4f} GRAM")
+        print(f"  🎮 LEVY Game        : {totals['levygame']:,.0f} LEVY")
         print("=" * 80)
 
 if __name__ == "__main__":
