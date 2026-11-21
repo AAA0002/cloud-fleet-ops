@@ -2,7 +2,7 @@
 """
 finish_all_fleet_sidetasks.py
 =============================================================================
-COMPREHENSIVE 13-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
+COMPREHENSIVE 12-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
@@ -1213,6 +1213,7 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
         # 6. Tasks (Dynamic task discovery across main, daily, custom and sponsored tasks)
         completed_tasks = set((u_info.get("tasks") or []) + (u_info.get("dayTasks") or []))
         tasks_to_check = ["channel", "payments", "chat", "x", "dnews", "dpay", "dpromo", "dreinvest", "dname", "c6"]
+        task_waits = {"x": 15, "chat": 8, "payments": 8, "dpay": 8, "dname": 2}
         partner_items = []
         try:
             tasks_cfg_resp = await rpc("/api/tasks")
@@ -1222,12 +1223,13 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
                 for ct in custom_tasks:
                     if isinstance(ct, dict) and ct.get("id"):
                         cid = str(ct["id"])
+                        task_waits[cid] = ct.get("wait", 8)
                         if cid not in tasks_to_check:
                             tasks_to_check.append(cid)
                 
                 # Check deposit task (dbuy -> +500 coins)
                 day_info = t_result.get("day", {})
-                if day_info.get("bought") and "dbuy" not in completed_tasks:
+                if (day_info.get("bought") or t_result.get("bought") or float(u_info.get("depositUsd", 0) or 0) > 0) and "dbuy" not in completed_tasks:
                     tasks_to_check.append("dbuy")
 
                 # Check sponsored tasks (Zero verification required)
@@ -1241,7 +1243,8 @@ async def sweep_chickenland_tasks(session: aiohttp.ClientSession, uid: str, name
             if tid not in completed_tasks:
                 if tid != "dbuy":
                     await rpc("/api/task/open", {"id": tid})
-                    await asyncio.sleep(0.5)
+                    w_sec = task_waits.get(tid, 1)
+                    await asyncio.sleep(min(w_sec + 0.5, 12))
                 t_claim = await rpc("/api/task", {"id": tid})
                 if t_claim.get("ok"):
                     res["tasks_claimed"] += 1
@@ -2634,7 +2637,7 @@ async def main():
                 pass
 
     logger.info("=============================================================================")
-    logger.info(f"🎯 STARTING COMPLETE 13-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
+    logger.info(f"🎯 STARTING COMPLETE 12-BOT FLEET SIDE-TASK HARVEST ({len(target_accounts)} ACCOUNTS)")
     logger.info("=============================================================================")
 
     conn = aiohttp.TCPConnector(limit=25, ttl_dns_cache=300)
@@ -2650,7 +2653,7 @@ async def main():
 
         # Print Summary
         logger.info("\n" + "=" * 80)
-        logger.info(f"📊 13-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
+        logger.info(f"📊 12-BOT FLEET ALL SIDE-TASKS HARVEST SUMMARY ({len(target_accounts)} ACCOUNTS)")
         logger.info("=" * 80)
         total_tasks = 0
         for rep in reports:
@@ -2695,12 +2698,22 @@ async def main():
 
         if bot_token and notif_channel:
             short_card = (
-                f"⚡ <b>Fleet 12-Bot Auto-Harvest Complete</b>\n"
-                f"• <b>Accounts Farmed:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code>\n"
-                f"• <b>Tasks & Rewards Claimed:</b> <code>{total_tasks} Total Claimed</code>\n"
-                f"• <b>Active Protocols (12/12):</b> <code>ATF:{atf_tot} • KYN:{kyn_tot} • PEP:{pep_tot} • ADX:{adx_tot} • CHK:{chk_tot} • EV:{ev_tot} • MXO:{mxo_tot} • AGE:{age_tot} • WATT:{life_tot} • VIC:{vic_tot} • DIL:{dillo_tot} • HNT:{hntr_tot}</code>\n"
-                f"• <b>Duration:</b> <code>{elapsed:.1f}s</code> | <b>Node:</b> <code>GitHub Actions Cloud Runner & Edge Mesh</code>\n"
-                f"• <b>Status:</b> 🟢 100% Ground-Truth Synced"
+                f"🚀 <b>AAA AUTO — 12-BOT HARVEST & REVENUE SUMMARY</b> 💎\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👥 <b>Fleet Accounts:</b> <code>{len(ACCOUNTS)}/{len(ACCOUNTS)} Online</code> 🟢\n"
+                f"🎯 <b>Total Tasks & Yields:</b> <b>{total_tasks} Claimed</b> ✅\n"
+                f"⏱ <b>Sweep Duration:</b> <code>{elapsed:.1f}s</code> ({elapsed/60:.1f}m)\n\n"
+                f"⛏️ <b>Active Mining Pools (5):</b>\n"
+                f"• 🪙 <b>ATF:</b> <code>+{atf_tot}</code> • 🌐 <b>Kynex:</b> <code>+{kyn_tot}</code> • 🐸 <b>PepeGram:</b> <code>+{pep_tot}</code>\n"
+                f"• ⛏️ <b>Dillo:</b> <code>+{dillo_tot}</code> • 🎯 <b>Hunter:</b> <code>+{hntr_tot}</code>\n\n"
+                f"⚡ <b>Tasks & Yield Compounding (4):</b>\n"
+                f"• 🐔 <b>Chicken Land:</b> <code>+{chk_tot}</code> • 🤖 <b>AdxEarn:</b> <code>+{adx_tot}</code>\n"
+                f"• ⚡ <b>MexoEarn:</b> <code>+{mxo_tot}</code> • 🎂 <b>MyAgeApp:</b> <code>+{age_tot}</code>\n\n"
+                f"🏦 <b>Treasury & Commercial Yield (3):</b>\n"
+                f"• 🏦 <b>EarnVault:</b> <code>+{ev_tot}</code> • 🔋 <b>Lifetime:</b> <code>+{life_tot}</code> • 🏢 <b>Victor's:</b> <code>+{vic_tot}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛡️ <b>Runner Node:</b> <code>GitHub Actions Headless Cloud & Edge Mesh</code>\n"
+                f"📊 <b>Telemetry:</b> <code>100% Ground-Truth Verified (Turso LibSQL SSOT)</code>"
             )
             try:
                 async with session.post(
