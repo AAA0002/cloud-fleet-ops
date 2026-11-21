@@ -403,7 +403,8 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
             t_req = {
                 "requests": [
                     {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'fleet:tokens:%';"}},
-                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens';"}}
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'miniapp_tokens';"}},
+                    {"type": "execute", "stmt": {"sql": "SELECT key, val FROM kv_mesh WHERE key LIKE 'victors:pass:%';"}}
                 ]
             }
             async with session.post(
@@ -461,6 +462,25 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
                                                     acc_dict[tk] = tv
                                                 elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(acc_dict.get(tk)):
                                                     acc_dict[tk] = tv
+                    # Tertiary Turso: victors passes from kv_mesh
+                    if len(results) > 2:
+                        vic_rows = results[2].get("response", {}).get("result", {}).get("rows", [])
+                        for vr in vic_rows:
+                            k_str = vr[0]["value"]
+                            v_raw = vr[1]["value"]
+                            uid_str = k_str.replace("victors:pass:", "")
+                            if uid_str.isdigit():
+                                pass_val = robust_json_loads(v_raw)
+                                hp_val = None
+                                if isinstance(pass_val, dict) and pass_val.get("humanPass"):
+                                    hp_val = pass_val["humanPass"]
+                                elif isinstance(pass_val, str) and len(pass_val) > 10:
+                                    hp_val = pass_val
+                                elif v_raw:
+                                    hp_val = str(v_raw)
+                                if hp_val:
+                                    acc_dict = tokens_db.setdefault(uid_str, {})
+                                    acc_dict["victors_pass"] = hp_val
             logger.info(f"Loaded {len(tokens_db)} accounts from Turso LibSQL SSOT.")
         except Exception as te:
             logger.warning(f"Turso tokens fetch note: {te}")
@@ -2088,8 +2108,30 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
         res["notes"].append("missing_init_data")
         return res
 
-    # 1. Retrieve humanPass from Upstash or acc dict
+    # 1. Retrieve humanPass from acc dict, Turso LibSQL SSOT, or Upstash
     hp = acc.get("victors_pass") or acc.get("victors_human_pass")
+    if not hp and TURSO_URL and TURSO_TOKEN:
+        try:
+            t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+            t_req = {
+                "requests": [
+                    {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", "args": [{"type": "text", "value": f"victors:pass:{uid}"}]}}
+                ]
+            }
+            async with session.post(t_http, json=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=4)) as tr:
+                if tr.status == 200:
+                    td = await tr.json()
+                    rows = td.get("results", [])[0].get("response", {}).get("result", {}).get("rows", [])
+                    if rows:
+                        p_val = robust_json_loads(rows[0][0]["value"])
+                        if isinstance(p_val, dict) and p_val.get("humanPass"):
+                            hp = p_val["humanPass"]
+                        elif isinstance(p_val, str) and len(p_val) > 10:
+                            hp = p_val
+                        else:
+                            hp = rows[0][0]["value"]
+        except Exception:
+            pass
     if not hp and UPSTASH_URL and UPSTASH_TOKEN:
         try:
             async with session.get(
