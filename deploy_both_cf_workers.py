@@ -95,7 +95,6 @@ ACCOUNTS = [
         "name": "Node 5 (coz1gameh)",
         "email": os.getenv("CF_EMAIL_NODE_5", "coz1gameh@gmail.com"),
         "api_key": os.getenv("CF_API_KEY_NODE_5", ""),
-        "api_token": os.getenv("CF_API_TOKEN_NODE_5", ""),
         "account_id": os.getenv("CF_ACCOUNT_ID_NODE_5", "da98cfb7cca333391bb349333f294d0f"),
         "subdomain": "aaaai",
         "kv_id": "c5eadf91ae4543edab3943789e2d3ccb",
@@ -18234,12 +18233,12 @@ async def deploy_account(acc):
         .replace("__GH_TOKEN__", gh_tok)
     )
 
-    if acc.get("api_token"):
+    if acc.get("api_token") and (str(acc["api_token"]).startswith("cfut_") or str(acc["api_token"]).startswith("cfat_")):
         headers = {"Authorization": f"Bearer {acc['api_token']}"}
     else:
         headers = {
             "X-Auth-Email": acc["email"],
-            "X-Auth-Key": acc["api_key"],
+            "X-Auth-Key": acc.get("api_key") or acc.get("api_token"),
         }
 
     bindings = [
