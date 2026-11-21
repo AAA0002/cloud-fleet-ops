@@ -41,7 +41,7 @@ except ImportError:
     pass
 
 try:
-    from turso_mesh import turso_get, turso_execute, TURSO_URL, TURSO_TOKEN
+    from turso_mesh import turso_get, turso_mget, turso_execute, TURSO_URL, TURSO_TOKEN
 except ImportError:
     TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")
     TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN") or os.getenv("TURSO_TOKEN", "")
@@ -244,22 +244,25 @@ def load_accounts() -> List[Dict[str, Any]]:
     return [{"user_id": uid, "name": f"Account {uid}"} for uid in FLEET_23_UIDS]
 
 
-def inspect_account_tokens(uid: str) -> Dict[str, Any]:
+def inspect_account_tokens(uid: str, preloaded_data: dict = None) -> Dict[str, Any]:
     """Retrieve and inspect token age for a specific account UID with multi-cloud failover."""
     data = None
+    if preloaded_data and isinstance(preloaded_data, dict):
+        data = preloaded_data
 
     # 1. High-Capacity Primary: Turso LibSQL SSOT (25M ops/mo, 100% free, zero quota limits)
-    try:
-        t_raw = turso_get(f"fleet:tokens:{uid}")
-        if t_raw:
-            if isinstance(t_raw, dict):
-                data = t_raw
-            else:
-                parsed = robust_json_loads(t_raw)
-                if isinstance(parsed, dict) and parsed:
-                    data = parsed
-    except Exception:
-        pass
+    if not data:
+        try:
+            t_raw = turso_get(f"fleet:tokens:{uid}")
+            if t_raw:
+                if isinstance(t_raw, dict):
+                    data = t_raw
+                else:
+                    parsed = robust_json_loads(t_raw)
+                    if isinstance(parsed, dict) and parsed:
+                        data = parsed
+        except Exception:
+            pass
 
     # 2. Secondary: Local fleet_miniapp_tokens.json fallback
     if not data or not isinstance(data, dict):
@@ -467,12 +470,16 @@ def main():
 
     expiring_uids = []
 
+    uids = [str(a.get("user_id") or a.get("account_id") or "") for a in accounts]
+    token_keys = [f"fleet:tokens:{u}" for u in uids if u and u.isdigit() and len(u) >= 9]
+    preloaded_tokens = turso_mget(token_keys) if "turso_mget" in globals() else {}
+
     for acc in accounts:
         uid = str(acc.get("user_id") or acc.get("account_id") or "")
         if not uid or not uid.isdigit() or len(uid) < 9:
             continue
 
-        res = inspect_account_tokens(uid)
+        res = inspect_account_tokens(uid, preloaded_data=preloaded_tokens.get(f"fleet:tokens:{uid}"))
         st = res.get("status")
         age = res.get("age_hours", 999.0)
 
