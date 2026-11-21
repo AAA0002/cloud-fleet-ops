@@ -316,7 +316,7 @@ async def get_fleet_mining_totals() -> dict:
             except Exception:
                 pass
 
-    # Fallback to Turso LibSQL kv_mesh or Upstash Redis fleet:live_state if any balance is 0
+    # Fallback to Turso LibSQL kv_mesh fleet:live_state if any balance is 0
     if (totals["knx"] == 0.0 or totals["atf"] == 0.0 or totals["chicken_hens"] == 0):
         # 1. Turso LibSQL High-Capacity SSOT
         turso_url = (os.getenv("TURSO_DB_URL") or os.getenv("TURSO_URL", "")).replace("libsql://", "https://") + "/v2/pipeline"
