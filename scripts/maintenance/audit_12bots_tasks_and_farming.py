@@ -101,7 +101,7 @@ except ImportError:
 
 upstash_get = turso_get
 
-async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: str, toks: dict) -> dict:
+async def audit_account_12bots(session: aiohttp.ClientSession, uid: str, name: str, toks: dict) -> dict:
     report = {
         "uid": uid,
         "name": name,
@@ -370,7 +370,7 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     except Exception as e:
         report["bots"]["lifetime"] = {"status": f"ERR: {str(e)[:30]}"}
 
-    # 11. Victor's Company
+    # 10. Victor's Company
     try:
         vic_init = toks.get("victors_init_data") or toks.get("vic_init_data") or toks.get("victors_company") or toks.get("victors")
         if vic_init:
@@ -500,7 +500,7 @@ async def main():
             if t_toks and isinstance(t_toks, dict):
                 toks.update(t_toks)
 
-            rep = await audit_account_14bots(session, uid, name, toks)
+            rep = await audit_account_12bots(session, uid, name, toks)
             all_reports[uid] = rep
             print(f"📋 Auditing Account: {name} ({uid})...")
             for bot_key, b_info in rep["bots"].items():
