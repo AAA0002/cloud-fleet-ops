@@ -511,7 +511,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• <b>Live On-Chain Balance:</b> <code>{wallet_bnb:.6f} BNB</code> (<code>~${wallet_usd:.2f} USD</code> / <code>~৳{wallet_bdt:.0f} BDT</code>)\n"
             f"• <b>Historical Distributions:</b> <code>{total_payouts_count} payouts</code> totaling <code>{total_payouts_bnb:.6f} BNB</code>\n"
             f"• <b>Live BNB Price:</b> <code>${bnb_price:.2f} USD</code>\n\n"
-            f"💎 <b>2. Multi-Chain 12-Bot Autonomous Mining Treasury:</b>\n"
+            f"💎 <b>2. Multi-Chain 13-Bot Autonomous Mining Treasury:</b>\n"
             f"• 🪙 <b>ATF Miner:</b> <code>{fleet_totals['atf']:,.2f} ATF</code> mined (Levels up to 160+, Deterministic Math Solver)\n"
             f"• 🌐 <b>Kynex Network:</b> <code>{fleet_totals['knx']:,.2f} KNX</code> mined (Firebase RTDB Node Auto-Claim)\n"
             f"• 🐸 <b>PepeGram:</b> <code>{fleet_totals['pepe']:,.2f} PEPE</code> mined (6h Cycles & Power Boosts)\n"
