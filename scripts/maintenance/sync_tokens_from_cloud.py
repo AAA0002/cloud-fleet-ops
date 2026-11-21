@@ -5,7 +5,7 @@ scripts/maintenance/sync_tokens_from_cloud.py
 Sync Fresh Cloud MiniApp Tokens to Local Workspace
 =============================================================================
 Fetches the latest cryptographically signed 24h WebApp tokens from Turso LibSQL SSOT
-(`kv_mesh`), Cloudflare Edge Mesh, and/or Upstash Redis (`fleet:tokens:{uid}`),
+(`kv_mesh`) and Cloudflare Edge Mesh (`fleet:tokens:{uid}`),
 updating local `fleet_miniapp_tokens.json` across all 23 fleet accounts.
 
 Complies with:
@@ -41,8 +41,6 @@ if os.path.exists(ENV_FILE):
 
 TURSO_URL = env.get("TURSO_DB_URL") or env.get("TURSO_URL", "")
 TURSO_TOKEN = env.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN", "")
-UPSTASH_URL = env.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL", "")
-UPSTASH_TOKEN = env.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN", "")
 LOCAL_TOKENS_FILE = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
 
 
@@ -179,25 +177,6 @@ def main():
                         break
         except Exception:
             pass
-
-    # 3. Tertiary: Upstash Redis (with safe quota exception handling)
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            req = urllib.request.Request(
-                f"{UPSTASH_URL}/get/miniapp_tokens",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-            )
-            with urllib.request.urlopen(req, timeout=6) as r:
-                resp = json.loads(r.read().decode())
-                res_val = resp.get("result")
-                if res_val:
-                    d_redis = robust_json_loads(res_val)
-                    if isinstance(d_redis, dict):
-                        print(f"  ✅ Loaded {len(d_redis)} accounts from Upstash miniapp_tokens")
-                        for u_id, u_toks in d_redis.items():
-                            merge_account_tokens(u_id, u_toks)
-        except Exception as e_redis:
-            print(f"ℹ️ Upstash Redis note (skipped): {e_redis}")
 
     # Write back updated fleet_miniapp_tokens.json
     with open(LOCAL_TOKENS_FILE, "w", encoding="utf-8") as f:

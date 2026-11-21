@@ -38,14 +38,14 @@ def send_payout_alert(amount: float, dest_wallet: str, tx_info: dict):
     if not REPORT_BOT_TOKEN:
         return
     text = (
-        f"🎯 <b>HUNTER MINER (@GramHtrsbot) ON-CHAIN CASHOUT CONFIRMED</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 <b>Withdrawn Amount:</b> <code>{amount:.4f} GRAM</code>\n"
+        f"🎯 <b>HUNTER MINER ON-CHAIN TON PAYOUT CONFIRMED</b> 💎\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>Withdrawn Amount:</b> <b>+{amount:.4f} GRAM</b> ✅\n"
         f"🏦 <b>Destination Vault:</b> <code>{dest_wallet}</code>\n"
-        f"👤 <b>Account:</b> Arif Hossain (👑 Master - {MASTER_UID})\n"
-        f"📋 <b>Server Response:</b> <code>{json.dumps(tx_info)}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <i>Direct Binance TON Vault deposit</i>"
+        f"👤 <b>Account:</b> <code>Arif Hossain (👑 Master - {MASTER_UID})</code>\n"
+        f"📋 <b>Receipt Details:</b> <code>{json.dumps(tx_info)}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 <b>Status:</b> 🟢 <code>Direct Binance TON Vault deposit</code>"
     )
     for cid in [ADMIN_CHANNEL_ID, PAYOUT_CHANNEL_ID]:
         if not cid:

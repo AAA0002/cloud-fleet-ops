@@ -40,6 +40,8 @@ from typing import Dict, List, Any, Optional, Tuple
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
+from turso_mesh import turso_get, turso_set, turso_keys
+
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -47,8 +49,6 @@ except ImportError:
     pass
 
 # Cloud & Vault Configurations
-UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL", "")
-UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN", "")
 REPORT_BOT_TOKEN = os.getenv("REPORT_BOT_TOKEN") or os.getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_NOTIFICATION_CHANNEL_ID = os.getenv("ADMIN_NOTIFICATION_CHANNEL_ID", "-1004358687850")
 PAYOUT_CHANNEL_ID = os.getenv("PAYOUT_CHANNEL_ID", "-1004402765950")
@@ -86,7 +86,7 @@ def robust_json_loads(val, default=None):
 
 
 def load_fleet_accounts() -> List[Dict[str, Any]]:
-    """Load all 23 fleet accounts with fallback to Upstash Redis vault."""
+    """Load all 23 fleet accounts with fallback to Turso LibSQL vault."""
     acc_path = os.path.join(BASE_DIR, "accounts.json")
     if os.path.exists(acc_path):
         try:
@@ -95,47 +95,29 @@ def load_fleet_accounts() -> List[Dict[str, Any]]:
         except Exception:
             pass
 
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            import urllib.request
-            req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                d = json.loads(resp.read().decode())
-                res = robust_json_loads(d.get("result"))
-                if isinstance(res, list) and res:
-                    return res
-        except Exception:
-            pass
-
-        try:
-            import urllib.request
-            url = f"{UPSTASH_URL}/keys/fleet:wallets_vault:*"
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                keys = json.loads(resp.read().decode()).get("result", [])
-                uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
+    try:
+        accs = turso_get("fleet:accounts")
+        if isinstance(accs, list) and accs:
+            return accs
+        keys = turso_keys("fleet:wallets_vault:%")
+        if keys:
+            uids = sorted(list(set([k.split(":")[-1] for k in keys if k.split(":")[-1].isdigit() and len(k.split(":")[-1]) >= 9])))
+            if uids:
                 return [{"user_id": uid, "name": f"Account {uid}"} for uid in uids]
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return []
 
 
 async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict[str, Any]:
-    """Retrieve all cached WebApp tokens for an account from Upstash Redis or local cache."""
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        url = f"{UPSTASH_URL}/get/fleet:tokens:{uid}"
-        headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-        try:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                if resp.status == 200:
-                    raw = (await resp.json()).get("result")
-                    if raw:
-                        parsed = robust_json_loads(raw)
-                        if parsed:
-                            return parsed
-        except Exception:
-            pass
+    """Retrieve all cached WebApp tokens for an account from Turso LibSQL or local cache."""
+    try:
+        toks = turso_get(f"fleet:tokens:{uid}")
+        if toks and isinstance(toks, dict):
+            return toks
+    except Exception:
+        pass
 
     # Local file fallback
     try:
@@ -152,7 +134,7 @@ async def fetch_account_tokens(session: aiohttp.ClientSession, uid: str) -> Dict
 
 
 async def record_payout_receipt(protocol: str, symbol: str, amount: float, recipient: str, uid: str, name: str) -> None:
-    """Record verified withdrawal receipt into local ledger, Upstash Redis, and Telegram Payout Channel."""
+    """Record verified withdrawal receipt into local ledger, Turso LibSQL, and Telegram Payout Channel."""
     ts_now = time.time()
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -182,18 +164,12 @@ async def record_payout_receipt(protocol: str, symbol: str, amount: float, recip
     except Exception:
         pass
 
-    # 2. Push to Upstash Redis list fleet:payouts:history
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with aiohttp.ClientSession() as s:
-                await s.post(
-                    f"{UPSTASH_URL}/lpush/fleet:payouts:history",
-                    headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                    json=json.dumps(receipt),
-                    timeout=aiohttp.ClientTimeout(total=5)
-                )
-        except Exception:
-            pass
+    # 2. Push to Turso LibSQL kv_mesh
+    try:
+        p_key = f"fleet:payout:{receipt.get('tx_hash') or int(time.time())}"
+        turso_set(p_key, receipt)
+    except Exception:
+        pass
 
     # 3. Broadcast verified receipt card to Telegram Payouts Channel (-1004402765950)
     if REPORT_BOT_TOKEN and PAYOUT_CHANNEL_ID:
@@ -466,14 +442,13 @@ async def sweep_victors_company(session: aiohttp.ClientSession, uid: str, name: 
 
     try:
         vic_pass = tokens.get("victors_pass") or tokens.get("victors_human_pass")
-        if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
+        if not vic_pass:
             try:
-                async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=3)) as p_resp:
-                    if p_resp.status == 200:
-                        p_data = await p_resp.json()
-                        r_pass = p_data.get("result")
-                        if r_pass:
-                            vic_pass = r_pass
+                v_res = turso_get(f"victors:pass:{uid}")
+                if isinstance(v_res, dict):
+                    vic_pass = v_res.get("humanPass")
+                elif isinstance(v_res, str):
+                    vic_pass = v_res
             except Exception:
                 pass
 
@@ -817,18 +792,14 @@ async def execute_universal_fleet_auto_withdrawals(session: aiohttp.ClientSessio
         "by_protocol": {}
     }
 
-    # Fetch Ton Wallets cache from Upstash
+    # Fetch Ton Wallets cache from Turso LibSQL kv_mesh
     ton_wallets_cache = {}
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            url = f"{UPSTASH_URL}/get/fleet:wallets:ton"
-            async with session.get(url, headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=5)) as r_tw:
-                if r_tw.status == 200:
-                    raw_tw = (await r_tw.json()).get("result")
-                    if raw_tw:
-                        ton_wallets_cache = robust_json_loads(raw_tw)
-        except Exception:
-            pass
+    try:
+        tw = turso_get("fleet:wallets:ton")
+        if tw and isinstance(tw, dict):
+            ton_wallets_cache = tw
+    except Exception:
+        pass
 
     for acc in accounts:
         uid = str(acc.get("user_id") or acc.get("account_id") or acc.get("id"))

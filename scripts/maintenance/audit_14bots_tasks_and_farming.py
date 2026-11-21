@@ -42,7 +42,47 @@ dotenv.load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 UPSTASH_URL = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("UPSTASH_URL")
 UPSTASH_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("UPSTASH_TOKEN")
+TURSO_URL = os.getenv("TURSO_DB_URL") or os.getenv("TURSO_DATABASE_URL")
+TURSO_TOKEN = os.getenv("TURSO_DB_TOKEN")
 MASTER_UID = "6727787768"
+
+# Preload Local SSOT cache
+LOCAL_TOKENS_PATH = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+LOCAL_TOKENS_DB = {}
+if os.path.exists(LOCAL_TOKENS_PATH):
+    try:
+        with open(LOCAL_TOKENS_PATH, "r", encoding="utf-8") as f:
+            LOCAL_TOKENS_DB = json.load(f)
+    except Exception:
+        pass
+
+
+def turso_query(sql: str, args: list = None) -> list:
+    if not TURSO_URL or not TURSO_TOKEN:
+        return []
+    http_url = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+    stmt = {"sql": sql}
+    if args:
+        stmt["args"] = [{"type": "text", "value": str(a)} for a in args]
+    body = {"requests": [{"type": "execute", "stmt": stmt}, {"type": "close"}]}
+    req = urllib.request.Request(http_url, data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read().decode())
+            results = data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                return results[0].get("response", {}).get("result", {}).get("rows", [])
+    except Exception:
+        pass
+    return []
+
+
+def turso_get(key: str):
+    rows = turso_query("SELECT val FROM kv_mesh WHERE key = ? LIMIT 1;", [key])
+    if rows and rows[0] and rows[0][0]:
+        val = rows[0][0].get("value")
+        return robust_json_loads(val)
+    return None
 
 def robust_json_loads(val):
     res = val
@@ -56,17 +96,12 @@ def robust_json_loads(val):
             break
     return res if isinstance(res, (dict, list)) else {}
 
-def upstash_get(key: str):
-    if not UPSTASH_URL or not UPSTASH_TOKEN:
-        return None
-    req = urllib.request.Request(f"{UPSTASH_URL}/get/{key}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode())
-            return robust_json_loads(data.get("result"))
-    except Exception:
-        pass
-    return None
+try:
+    from turso_mesh import turso_get
+except ImportError:
+    pass
+
+upstash_get = turso_get
 
 async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: str, toks: dict) -> dict:
     report = {
@@ -320,17 +355,11 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     try:
         vic_init = toks.get("victors_init_data") or toks.get("vic_init_data") or toks.get("victors_company") or toks.get("victors")
         if vic_init:
-            vic_pass = toks.get("victors_pass") or toks.get("victors_human_pass")
-            if not vic_pass and UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    async with session.get(f"{UPSTASH_URL}/get/victors:pass:{uid}", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=5)) as r_vp:
-                        if r_vp.status == 200:
-                            p_res = (await r_vp.json()).get("result")
-                            if p_res:
-                                pd = json.loads(p_res) if isinstance(p_res, str) else p_res
-                                vic_pass = pd.get("humanPass") if isinstance(pd, dict) else pd
-                except Exception:
-                    pass
+            # Check Turso LibSQL SSOT first for the latest Turnstile humanPass
+            t_pass = turso_get(f"victors:pass:{uid}")
+            vic_pass = t_pass.get("humanPass") if (t_pass and isinstance(t_pass, dict)) else t_pass
+            if not vic_pass:
+                vic_pass = toks.get("victors_pass") or toks.get("victors_human_pass")
 
             h = {
                 "Content-Type": "application/json",
@@ -384,13 +413,11 @@ async def audit_account_14bots(session: aiohttp.ClientSession, uid: str, name: s
     try:
         hunter_init = toks.get("hunter_init_data") or toks.get("hunter") or toks.get("hunter_token") or ""
         hunter_jwt = toks.get("hunter_jwt") or ""
-        if not hunter_jwt and UPSTASH_URL and UPSTASH_TOKEN:
+        if not hunter_jwt:
             try:
-                async with session.get(f"{UPSTASH_URL}/get/fleet:tokens:{uid}:hunter_jwt", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, timeout=aiohttp.ClientTimeout(total=5)) as r_hj:
-                    if r_hj.status == 200:
-                        p_hj = (await r_hj.json()).get("result")
-                        if p_hj and isinstance(p_hj, str) and len(p_hj) > 20:
-                            hunter_jwt = p_hj
+                t_hj = turso_get(f"fleet:tokens:{uid}:hunter_jwt")
+                if t_hj and isinstance(t_hj, str):
+                    hunter_jwt = t_hj
             except Exception:
                 pass
 
@@ -440,21 +467,20 @@ async def main():
                 except Exception:
                     pass
 
-        print(f"Loaded tokens for {len(accs)} accounts from Upstash Redis.\n")
+        print(f"Loaded tokens for {len(accs)} accounts from Turso LibSQL Primary SSOT.\n")
 
         for acc in accs:
             uid = str(acc.get("user_id") or acc.get("uid") or acc.get("id") or "")
             name = acc.get("first_name") or acc.get("name") or uid
-            toks = upstash_get(f"fleet:tokens:{uid}") or {}
-            if not toks:
-                local_toks_path = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
-                if os.path.exists(local_toks_path):
-                    try:
-                        with open(local_toks_path) as f:
-                            all_toks = json.load(f)
-                            toks = all_toks.get(uid, {})
-                    except Exception:
-                        pass
+            # 1. Local SSOT
+            toks = LOCAL_TOKENS_DB.get(uid) or {}
+            # 2. Turso LibSQL SSOT fallback
+            if not toks or len(toks) < 8:
+                t_toks = turso_get(f"fleet:tokens:{uid}")
+                if t_toks and isinstance(t_toks, dict):
+                    merged = dict(toks)
+                    merged.update(t_toks)
+                    toks = merged
 
             rep = await audit_account_14bots(session, uid, name, toks)
             print(f"📋 Auditing Account: {name} ({uid})...")
