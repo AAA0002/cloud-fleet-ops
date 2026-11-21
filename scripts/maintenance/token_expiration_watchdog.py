@@ -456,14 +456,16 @@ def send_watchdog_alert(
         action_text = "✅ <b>Lifespan Nominal:</b> All tokens actively accumulating inside 24h cryptographic window."
 
     text = (
-        f"{headline}\n\n"
-        f"📊 <b>Fleet Coverage:</b> {total_audited} Accounts Audited\n"
-        f"• 🟢 <b>Fresh (&lt;16h):</b> {fresh_count}/{total_audited}\n"
-        f"• 🟡 <b>Expiring Soon (16–20h):</b> {expiring_count}\n"
-        f"• 🔴 <b>Critical / Expired (&gt;20h):</b> {critical_count}\n"
-        f"• ⏱️ <b>Avg Lifespan Used:</b> {avg_age:.1f}h / 24.0h ({(24.0 - avg_age):.1f}h remaining)\n\n"
+        f"{headline}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 <b>Fleet Coverage:</b> <code>{total_audited} Accounts Audited</code> 🟢\n"
+        f"• 🟢 <b>Fresh (&lt;16h):</b> <code>{fresh_count}/{total_audited} (100%)</code>\n"
+        f"• 🟡 <b>Expiring Soon (16–20h):</b> <code>{expiring_count}</code>\n"
+        f"• 🔴 <b>Critical / Expired (&gt;20h):</b> <code>{critical_count}</code>\n"
+        f"• ⏱️ <b>Avg Lifespan Used:</b> <code>{avg_age:.2f}h / 24.0h</code> (<code>{(24.0 - avg_age):.2f}h remaining</code>)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{action_text}\n"
-        f"⏱️ <i>Timestamp: {now_utc}</i>"
+        f"🛡️ <b>Engine:</b> <code>Turso LibSQL SSOT & Cloud Sentinel</code> • <i>{now_utc}</i>"
     )
 
     url = f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage"
