@@ -98,19 +98,21 @@ OFFICIAL_USERNAMES: Set[str] = {
     # System & Admin Bots
     "myagyai", "my_router_ai_bot", "aaapremiumappsbot", "aaagmailbot", "aaa_instant_mail_bot",
     "botfather", "spambot", "stickers", "telegram",
-    # Active 12 Legitimate Mining Bots & Official Channels
+    # Active 13 Legitimate Mining Bots & Official Channels
     "atfminers_bot", "atf_airdrop_bot", "kynex_miningbot", "pepe_gram_bot",
     "adxearnaibot", "adxearnai", "chickenlandbot", "earnvaultapp_bot", "earnvaulte", "mexoearni_bot",
     "myageapp", "appmyage", "lifetime_energy_bot",
     "victors_company_bot", "web3primeteam", "solanamemes001",
     "dillo_miner_bot", "dillotonlive",
     "gramhtrsbot", "gramhtrs", "rootofhunter",
+    "levygame", "levy_game_bot",
     # Official Communities & Channels
     "aaaautominer", "aaaautomining", "aaa_activity", "rootofhunter_top",
     "androforever_oficial", "theboss_victor", "victors_company", "vicwithdrawals",
     "landchickennews", "chickenlandcodes",
     "chickenlandpay", "pepe_grammmm", "mexoearn", "mexoearnpaid",
     "kynex_mining", "ai_trading_forex", "atffarsi",
+    "levygame_news", "levygame_chat", "levypayout",
     # Personal Admin Usernames
     "arif2743aaa", "arif2743_a"
 }
