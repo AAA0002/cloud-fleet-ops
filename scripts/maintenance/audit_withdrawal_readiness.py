@@ -4,7 +4,7 @@ scripts/maintenance/audit_withdrawal_readiness.py
 =============================================================================
 Universal Fleet Withdrawal Readiness Auditor & Automated Cashout Sentinel
 =============================================================================
-Audits live balances across ALL 23 fleet accounts for all 14 active mining protocols
+Audits live balances across ALL 23 fleet accounts for all 12 active mining protocols
 against official, ground-truth payout thresholds:
 
 1. Chicken Land: Dynamic threshold (minUsd $0.1043 / eggUsd ~15,019 eggs = 0.1001 GRAM)
