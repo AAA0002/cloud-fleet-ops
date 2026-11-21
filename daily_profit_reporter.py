@@ -177,7 +177,8 @@ async def get_fleet_mining_totals() -> dict:
         "lifetime": 0.0,
         "victors": 0.0,
         "dillo": 0.0,
-        "hunter": 0.0
+        "hunter": 0.0,
+        "levygame": 0.0
     }
     rep_file = os.path.join(BASE_DIR, "live_farming_and_sidetasks_report.json")
     if os.path.exists(rep_file):
@@ -292,6 +293,15 @@ async def get_fleet_mining_totals() -> dict:
                                     val = m.group(1) or m.group(2)
                                     totals["hunter"] += float(val)
 
+                        # 13. LEVY Game
+                        elif "levy" in b_name.lower():
+                            if isinstance(core, dict) and "levy" in core:
+                                try: totals["levygame"] += float(core.get("levy", 0) or 0)
+                                except Exception: pass
+                            else:
+                                m = re.search(r"([\d\.]+)\s*LEVY", core_str)
+                                if m: totals["levygame"] += float(m.group(1))
+
 
         except Exception:
             pass
@@ -317,6 +327,16 @@ async def get_fleet_mining_totals() -> dict:
                     totals["dillo"] = sum(float(a.get("dillo_balance", 0) or 0) for a in accs)
                 if totals.get("hunter", 0.0) == 0.0:
                     totals["hunter"] = sum(float(a.get("hunter_balance", 0) or 0) for a in accs)
+        except Exception:
+            pass
+
+    # Fallback from fleet_miniapp_tokens.json for levygame
+    tokens_file = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
+    if os.path.exists(tokens_file) and totals.get("levygame", 0.0) == 0.0:
+        try:
+            with open(tokens_file, "r", encoding="utf-8") as f:
+                t_data = json.load(f)
+                totals["levygame"] = sum(float(v.get("levygame", {}).get("levy", 0) or 0) for v in t_data.values() if isinstance(v, dict))
         except Exception:
             pass
             
@@ -504,6 +524,7 @@ async def generate_and_send_report(dry_run: bool = False):
             f"• 🏢 <b>Victor's Company:</b> <code>{fleet_totals['victors']:,.2f} VICX</code> (Autonomous Mining, Shifts & Referral Commissions)\n"
             f"• ⛏️ <b>Dillo Miner:</b> <code>{fleet_totals['dillo']:,.2f} DILLO</code> (TON Jetton Protocol, 2,400 DILLO/d Passive Farm, Energy Taps & Streaks)\n"
             f"• 🎯 <b>Hunter Miner:</b> <code>{fleet_totals.get('hunter', 0.0):,.4f} GRAM</code> (TON Jetton Protocol, 12h Mining Cycles, Tasks & Instant TON Cashouts)\n"
+            f"• 🎮 <b>LEVY Game:</b> <code>{fleet_totals.get('levygame', 0.0):,.0f} LEVY</code> (Empire Mining, TonConnect Wallets & Tasks)\n"
             f"• 💎 <b>On-Chain Target TON:</b> <code>{TON_PRIMARY_WALLET}</code>\n"
             f"• 💎 <b>Live On-Chain TON Balance:</b> <code>{wallet_ton:.4f} TON</code> (<code>~${wallet_ton_usd:.2f} USD</code> / <code>~৳{wallet_ton_bdt:.0f} BDT</code>)\n"
             f"• 💎 <b>TON Price (TonAPI):</b> <code>${ton_price:.2f} USD</code>\n\n"
