@@ -260,12 +260,15 @@ def sweep_account(uid: str, info: dict, tokens_db: dict):
         final_amt = float(amt or calc_gram)
         print(f"  🎉 WITHDRAWAL SUCCESSFUL! Amount: {final_amt:.6f} GRAM to {TARGET_WALLET}")
         alert_msg = (
-            f"🐔 <b>Chicken Land 24h Autonomous Withdrawal Executed!</b>\n"
-            f"• <b>Account:</b> <code>{name} ({uid})</code>\n"
-            f"• <b>Amount Paid:</b> <code>{final_amt:.6f} GRAM</code>\n"
-            f"• <b>Target TON Vault:</b> <code>{TARGET_WALLET}</code>\n"
-            f"• <b>Memo:</b> <code>{memo or 'None'}</code>\n"
-            f"• <b>Status:</b> 🟢 On-Chain Payout Dispatched"
+            f"🐔 <b>CHICKEN LAND 24H AUTONOMOUS ON-CHAIN PAYOUT</b> 💎\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Account:</b> <code>{name}</code> (<code>{uid}</code>)\n"
+            f"💰 <b>Amount Dispatched:</b> <b>+{final_amt:.6f} GRAM</b> ✅\n"
+            f"🏦 <b>Target TON Vault:</b> <code>{TARGET_WALLET}</code>\n"
+            f"🏷️ <b>Binance Memo:</b> <code>{memo or 'None'}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🟢 <b>Status:</b> <code>CONFIRMED ON-CHAIN & HARVESTED</code>\n"
+            f"🛡️ <b>Engine:</b> <code>24h Autonomous Cooldown Watchdog & TON Gateway</code>"
         )
         send_telegram_alert(alert_msg)
         return {"status": "success", "amount": final_amt, "address": TARGET_WALLET}
