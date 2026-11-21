@@ -6,7 +6,7 @@ COMPREHENSIVE 12-BOT FLEET SIDE-TASK HARVESTER & AUTOMATION ENGINE
 =============================================================================
 Sweeps and completes all available side-tasks, daily check-ins, social joins,
 cooldown missions, wallet verifications, and referral commission claims across
-all dynamic accounts in the fleet for all 13 legitimate bots:
+all dynamic accounts in the fleet for all 12 legitimate bots:
   1. ATF Miner (@atfminers_bot)
   2. Kynex Network (@Kynex_miningbot)
   3. PepeGram (@Pepe_gram_bot)
