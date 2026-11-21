@@ -491,6 +491,7 @@ async def main():
         token_keys = [f"fleet:tokens:{str(a.get('user_id') or a.get('uid') or a.get('id') or '')}" for a in accs]
         turso_tokens_map = turso_mget(token_keys) if "turso_mget" in globals() else {}
 
+        all_reports = {}
         for acc in accs:
             uid = str(acc.get("user_id") or acc.get("uid") or acc.get("id") or "")
             name = acc.get("first_name") or acc.get("name") or uid
@@ -500,6 +501,7 @@ async def main():
                 toks.update(t_toks)
 
             rep = await audit_account_14bots(session, uid, name, toks)
+            all_reports[uid] = rep
             print(f"📋 Auditing Account: {name} ({uid})...")
             for bot_key, b_info in rep["bots"].items():
                 st = b_info.get("status", "UNKNOWN")
@@ -508,6 +510,92 @@ async def main():
                 tasks = b_info.get("tasks_info", "")
                 print(f"  {icon} {bot_key.upper():12} | Status: {st:10} | Bal: {bal:25} | {tasks}")
             print()
+
+        # Save to local and cloud SSOT
+        report_path = os.path.join(BASE_DIR, "live_farming_and_sidetasks_report.json")
+        try:
+            with open(report_path, "w", encoding="utf-8") as rf:
+                json.dump(all_reports, rf, indent=2)
+            print(f"✅ Saved live report to {report_path}")
+        except Exception as e:
+            print(f"Note saving report locally: {e}")
+
+        try:
+            from turso_mesh import turso_set
+            turso_set("fleet:live_audit_report", all_reports)
+            print("✅ Synced live report to Turso LibSQL (fleet:live_audit_report)")
+        except Exception:
+            pass
+
+        # Aggregate and display fleet treasury totals
+        totals = {
+            "atf": 0.0, "kynex": 0.0, "pepe": 0.0, "adx": 0.0,
+            "chicken_coins": 0, "chicken_eggs": 0, "earnvault": 0.0,
+            "mexo": 0.0, "myage": 0.0, "lifetime": 0.0, "victors": 0.0,
+            "dillo": 0.0, "hunter": 0.0
+        }
+        import re
+        for uid, rep in all_reports.items():
+            bots = rep.get("bots", {})
+            for b_name, b_info in bots.items():
+                bal = b_info.get("balance", "")
+                if not bal or bal == "—":
+                    continue
+                if b_name == "atf":
+                    m = re.search(r"([\d\.]+)\s*ATF", bal)
+                    if m: totals["atf"] += float(m.group(1))
+                elif b_name == "kynex":
+                    m = re.search(r"([\d\.]+)\s*KNX", bal)
+                    if m: totals["kynex"] += float(m.group(1))
+                elif b_name == "pepegram":
+                    m = re.search(r"([\d\.]+)\s*Hashes", bal)
+                    if m: totals["pepe"] += float(m.group(1))
+                elif b_name == "adxearn":
+                    m = re.search(r"([\d\.]+)\s*Pts", bal)
+                    if m: totals["adx"] += float(m.group(1))
+                elif b_name == "chickenland":
+                    m = re.search(r"([\d,]+)\s*coins\s*\(([\d,]+)\s*eggs\)", bal)
+                    if m:
+                        totals["chicken_coins"] += int(m.group(1).replace(",", ""))
+                        totals["chicken_eggs"] += int(m.group(2).replace(",", ""))
+                elif b_name == "earnvault":
+                    m = re.search(r"\$([\d\.]+)\s*USD", bal)
+                    if m: totals["earnvault"] += float(m.group(1))
+                elif b_name == "mexoearn":
+                    m = re.search(r"([\d\.]+)\s*MXO", bal)
+                    if m: totals["mexo"] += float(m.group(1))
+                elif b_name == "myage":
+                    m = re.search(r"(\d+)\s*AGE", bal)
+                    if m: totals["myage"] += float(m.group(1))
+                elif b_name == "lifetime":
+                    m = re.search(r"([\d\.]+)\s*Hashes", bal)
+                    if m: totals["lifetime"] += float(m.group(1))
+                elif b_name == "victors":
+                    m = re.search(r"([\d\.]+)\s*VICX", bal)
+                    if m: totals["victors"] += float(m.group(1))
+                elif b_name == "dillo":
+                    m = re.search(r"([\d\.]+)\s*DILLO", bal)
+                    if m: totals["dillo"] += float(m.group(1))
+                elif b_name == "hunter":
+                    m = re.search(r"Total:\s*([\d\.]+)", bal) or re.search(r"([\d\.]+)\s*GRAM", bal)
+                    if m: totals["hunter"] += float(m.group(1))
+
+        print("=" * 80)
+        print("📊 12-BOT FLEET TREASURY TOTALS AUDIT SUMMARY")
+        print("=" * 80)
+        print(f"  🪙 ATF Miner        : {totals['atf']:,.2f} ATF")
+        print(f"  🌐 Kynex Network    : {totals['kynex']:,.2f} KNX")
+        print(f"  🐸 PepeGram         : {totals['pepe']:,.2f} Hashes")
+        print(f"  🤖 AdxEarn AI       : {totals['adx']:,.0f} Pts")
+        print(f"  🐔 Chicken Land     : {totals['chicken_coins']:,} coins | {totals['chicken_eggs']:,} eggs")
+        print(f"  🏦 EarnVault        : ${totals['earnvault']:,.2f} USD")
+        print(f"  ⚡ MexoEarn         : {totals['mexo']:,.1f} MXO")
+        print(f"  🎂 MyAgeApp         : {totals['myage']:,.0f} AGE")
+        print(f"  🔋 Lifetime Energy  : {totals['lifetime']:,.1f} Hashes")
+        print(f"  🏢 Victor's Company : {totals['victors']:,.2f} VICX")
+        print(f"  ⛏️ Dillo Miner      : {totals['dillo']:,.1f} DILLO")
+        print(f"  🎯 Hunter Miner     : {totals['hunter']:.4f} GRAM")
+        print("=" * 80)
 
 if __name__ == "__main__":
     asyncio.run(main())
