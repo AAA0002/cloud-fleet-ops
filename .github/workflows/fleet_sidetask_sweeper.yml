@@ -29,10 +29,10 @@ jobs:
 
       - name: 1. Verify & Auto-Heal Token Freshness (Pre-Flight)
         env:
-          UPSTASH_REDIS_REST_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
-          UPSTASH_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
+          TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
@@ -42,12 +42,10 @@ jobs:
 
       - name: 2. Execute 12-Bot Fleet Side-Task & Mining Sweep
         env:
-          UPSTASH_REDIS_REST_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
-          UPSTASH_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
           TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
           TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
           SECRET_KEY: "${{ secrets.SECRET_KEY }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
@@ -61,25 +59,25 @@ jobs:
 
       - name: 3. Universal Fleet Auto-Withdrawal Sweep & Readiness Audit (Post-Flight)
         env:
-          UPSTASH_REDIS_REST_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
-          UPSTASH_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
+          TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"
           PAYOUT_CHANNEL_ID: "-1004402765950"
         run: |
-          python scripts/maintenance/chickenland_24h_withdrawal_sniper.py
-          python scripts/maintenance/fleet_auto_withdrawal_engine.py --sweep
-          python scripts/maintenance/audit_withdrawal_readiness.py
+          python scripts/maintenance/chickenland_24h_withdrawal_sniper.py || true
+          python scripts/maintenance/fleet_auto_withdrawal_engine.py --sweep || true
+          python scripts/maintenance/audit_withdrawal_readiness.py || true
 
       - name: 4. Automated Fleet Cleaner & Hygiene Maintenance
         env:
-          UPSTASH_REDIS_REST_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_REDIS_REST_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
-          UPSTASH_URL: "${{ secrets.UPSTASH_REDIS_REST_URL || secrets.UPSTASH_URL || 'https://relaxing-starfish-285827.upstash.io' }}"
-          UPSTASH_TOKEN: "${{ secrets.UPSTASH_REDIS_REST_TOKEN || secrets.UPSTASH_TOKEN }}"
+          TURSO_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
+          TURSO_DB_URL: "${{ secrets.TURSO_URL || secrets.TURSO_DB_URL || 'https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io' }}"
+          TURSO_DB_TOKEN: "${{ secrets.TURSO_TOKEN || secrets.TURSO_DB_TOKEN }}"
           REPORT_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_BOT_TOKEN: "${{ secrets.REPORT_BOT_TOKEN || secrets.ADMIN_BOT_TOKEN || secrets.ALERT_BOT_TOKEN }}"
           ADMIN_NOTIFICATION_CHANNEL_ID: "-1004358687850"

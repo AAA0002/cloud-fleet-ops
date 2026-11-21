@@ -70,11 +70,11 @@ def robust_json_loads(val):
 
 def turso_get_sync(key: str):
     """Fetches a key value from Turso LibSQL kv_mesh table (<15ms, zero rate-limit friction)."""
-    t_url = os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
+    t_url = (os.getenv("TURSO_URL") or os.getenv("TURSO_DB_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io").replace("libsql://", "https://").rstrip("/")
     t_token = os.getenv("TURSO_TOKEN") or os.getenv("TURSO_DB_TOKEN") or ""
     if not t_token:
         return None
-    endpoint = f"{t_url.rstrip('/')}/v2/pipeline"
+    endpoint = f"{t_url}/v2/pipeline"
     payload = {
         "requests": [
             {
