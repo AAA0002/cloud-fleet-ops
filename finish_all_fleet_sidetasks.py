@@ -153,6 +153,39 @@ if not ACCOUNTS:
         except Exception:
             pass
 
+# High-Capacity Primary SSOT: Turso LibSQL (Zero rate limits, 25M ops/mo)
+if (not ACCOUNTS or len(ACCOUNTS) < 20) and TURSO_URL and TURSO_TOKEN:
+    try:
+        t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+        t_req = json.dumps({
+            "requests": [
+                {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'fleet:accounts' OR key = 'fleet:live_state' LIMIT 1;", "args": []}},
+                {"type": "close"}
+            ]
+        }).encode()
+        req_t = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req_t, timeout=6) as t_resp:
+            t_data = json.loads(t_resp.read().decode())
+            results = t_data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                if rows:
+                    raw_val = rows[0][0].get("value")
+                    t_accs = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
+                    while isinstance(t_accs, str):
+                        t_accs = json.loads(t_accs)
+                    if isinstance(t_accs, dict) and "accounts" in t_accs:
+                        t_accs = t_accs["accounts"]
+                    if isinstance(t_accs, list):
+                        existing_uids = {str(a.get("user_id") or a.get("account_id") or a.get("id") or "") for a in ACCOUNTS}
+                        for a in t_accs:
+                            a_uid = str(a.get("user_id") or a.get("account_id") or a.get("id") or "")
+                            if a_uid and a_uid not in existing_uids and a_uid != "8881914294" and "nancy" not in str(a.get("name", "")).lower():
+                                ACCOUNTS.append(a)
+                                existing_uids.add(a_uid)
+    except Exception:
+        pass
+
 if UPSTASH_URL and UPSTASH_TOKEN:
     try:
         req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
@@ -177,6 +210,27 @@ if os.path.exists(wallets_path):
     try:
         with open(wallets_path, "r") as f:
             ton_wallets = json.load(f)
+    except Exception:
+        pass
+
+if not ton_wallets and TURSO_URL and TURSO_TOKEN:
+    try:
+        t_http = TURSO_URL.replace("libsql://", "https://") + "/v2/pipeline"
+        t_req = json.dumps({
+            "requests": [
+                {"type": "execute", "stmt": {"sql": "SELECT val FROM kv_mesh WHERE key = 'fleet:wallets:ton' LIMIT 1;", "args": []}},
+                {"type": "close"}
+            ]
+        }).encode()
+        req_t = urllib.request.Request(t_http, data=t_req, headers={"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req_t, timeout=6) as t_resp:
+            t_data = json.loads(t_resp.read().decode())
+            results = t_data.get("results", [])
+            if results and results[0].get("type") == "ok":
+                rows = results[0].get("response", {}).get("result", {}).get("rows", [])
+                if rows:
+                    raw_val = rows[0][0].get("value")
+                    ton_wallets = json.loads(raw_val) if isinstance(raw_val, str) else raw_val
     except Exception:
         pass
 
