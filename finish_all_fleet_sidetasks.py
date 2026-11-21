@@ -1487,25 +1487,37 @@ async def sweep_mexoearn_tasks(session: aiohttp.ClientSession, uid: str, name: s
                     res["tasks_claimed"] += 1
                     res["notes"].append(f"checkin_d{d.get('day')}")
 
-        # Tasks sweep
+        # Tasks sweep (batch start + single max wait + batch claim to minimize latency)
         async with session.get("https://mexoearn.xyz/api/tasks", headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as r:
             if r.status == 200:
                 d = await r.json()
                 tasks = d.get("tasks", [])
+                pending_claims = []
+                max_delay = 0
                 for t in tasks:
                     if not t.get("locked") and not t.get("requiresProof") and t.get("status") == "available":
                         tid = str(t.get("id"))
+                        delay = min(max(int(t.get("claimDelaySeconds", 5)) + 1, 3), 12)
                         try:
-                            delay = max(int(t.get("claimDelaySeconds", 5)) + 1, 3)
                             async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/start", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rs:
                                 if rs.status == 200:
-                                    await asyncio.sleep(delay)
-                                    async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rc:
-                                        if rc.status == 200:
-                                            cd = await rc.json()
-                                            if cd.get("ok"):
-                                                res["tasks_claimed"] += 1
-                                                res["notes"].append(f"task_{tid}")
+                                    pending_claims.append(tid)
+                                    if delay > max_delay:
+                                        max_delay = delay
+                        except Exception:
+                            pass
+                        if len(pending_claims) >= 3:
+                            break
+                if pending_claims:
+                    await asyncio.sleep(max_delay)
+                    for tid in pending_claims:
+                        try:
+                            async with session.post(f"https://mexoearn.xyz/api/tasks/{tid}/claim", json={}, headers=auth_h, timeout=aiohttp.ClientTimeout(total=6)) as rc:
+                                if rc.status == 200:
+                                    cd = await rc.json()
+                                    if cd.get("ok"):
+                                        res["tasks_claimed"] += 1
+                                        res["notes"].append(f"task_{tid}")
                         except Exception:
                             pass
 
