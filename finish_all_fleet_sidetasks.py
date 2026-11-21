@@ -65,8 +65,7 @@ if os.path.exists(env_file):
                 if k not in env or not env[k]:
                     env[k] = v
 
-UPSTASH_URL = os.environ.get("UPSTASH_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or env.get("UPSTASH_URL") or env.get("UPSTASH_REDIS_REST_URL") or "https://relaxing-starfish-285827.upstash.io"
-UPSTASH_TOKEN = os.environ.get("UPSTASH_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or env.get("UPSTASH_TOKEN") or env.get("UPSTASH_REDIS_REST_TOKEN") or ""
+# Turso LibSQL Key-Value Mesh (25M free ops/month, zero rate-limit)
 TURSO_URL = os.environ.get("TURSO_DB_URL") or os.environ.get("TURSO_DATABASE_URL") or os.environ.get("TURSO_URL") or env.get("TURSO_DB_URL") or env.get("TURSO_DATABASE_URL") or env.get("TURSO_URL") or "https://my-agy-fleet-db-aaa2743.aws-ap-south-1.turso.io"
 TURSO_TOKEN = os.environ.get("TURSO_DB_TOKEN") or os.environ.get("TURSO_TOKEN") or os.environ.get("TURSO_AUTH_TOKEN") or env.get("TURSO_DB_TOKEN") or env.get("TURSO_TOKEN") or env.get("TURSO_AUTH_TOKEN") or ""
 SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CF_SECRET_KEY") or env.get("SECRET_KEY") or env.get("CF_SECRET_KEY") or ""
@@ -186,22 +185,6 @@ if (not ACCOUNTS or len(ACCOUNTS) < 20) and TURSO_URL and TURSO_TOKEN:
     except Exception:
         pass
 
-if UPSTASH_URL and UPSTASH_TOKEN:
-    try:
-        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:accounts", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get("result")
-            if res:
-                up_accs = json.loads(res) if isinstance(res, str) else res
-                existing_uids = {str(a.get("user_id") or a.get("account_id") or a.get("id") or "") for a in ACCOUNTS}
-                for a in up_accs:
-                    a_uid = str(a.get("user_id") or a.get("account_id") or a.get("id") or "")
-                    if a_uid and a_uid not in existing_uids and a_uid != "8881914294" and "nancy" not in str(a.get("name", "")).lower():
-                        ACCOUNTS.append(a)
-                        existing_uids.add(a_uid)
-    except Exception:
-        pass
 
 # Load TON Wallets
 ton_wallets = {}
@@ -234,15 +217,6 @@ if not ton_wallets and TURSO_URL and TURSO_TOKEN:
     except Exception:
         pass
 
-if not ton_wallets and UPSTASH_URL and UPSTASH_TOKEN:
-    try:
-        req = urllib.request.Request(f"{UPSTASH_URL}/get/fleet:wallets:ton", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            d = json.loads(resp.read().decode())
-            if d.get("result"):
-                ton_wallets = json.loads(d["result"]) if isinstance(d["result"], str) else d["result"]
-    except Exception:
-        pass
 
 
 def get_ton_wallet_address(acc: dict, uid: str) -> str:
@@ -539,124 +513,14 @@ async def fetch_all_tokens(session: aiohttp.ClientSession) -> Dict[str, Dict[str
         except Exception as te:
             logger.warning(f"Turso tokens fetch note: {te}")
 
-    up_h = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
-    
-    # 1. Secondary: Merge Upstash miniapp_tokens
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(f"{UPSTASH_URL}/get/miniapp_tokens", headers=up_h, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                if r.status == 200:
-                    d = await r.json()
-                    raw = d.get("result")
-                    raw = robust_json_loads(raw)
-                    if isinstance(raw, dict):
-                        for uid, utoks in raw.items():
-                            s_uid = str(uid)
-                            if s_uid == "8881914294": continue
-                            if s_uid not in tokens_db:
-                                tokens_db[s_uid] = utoks
-                            else:
-                                for tk, tv in utoks.items():
-                                    if tv:
-                                        if tk not in tokens_db[s_uid]:
-                                            tokens_db[s_uid][tk] = tv
-                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(tokens_db[s_uid].get(tk)):
-                                            tokens_db[s_uid][tk] = tv
-        except Exception as e:
-            logger.warning(f"Error loading miniapp_tokens: {e}")
-
-    # Discover all dynamic accounts from Upstash Redis keys fleet:tokens:*
-    discovered_uids = set(str(acc.get("user_id") or acc.get("account_id") or acc.get("id") or "") for acc in ACCOUNTS if (acc.get("user_id") or acc.get("account_id") or acc.get("id")))
-    if UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(f"{UPSTASH_URL}/keys/fleet:tokens:*", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as kr:
-                if kr.status == 200:
-                    kd = await kr.json()
-                    for k in kd.get("result", []):
-                        u = k.split(":")[-1]
-                        if u.isdigit() and u != "8881914294":
-                            discovered_uids.add(u)
-        except Exception:
-            pass
-
     # Ensure any newly discovered account is dynamically present in ACCOUNTS
     existing_uids = set(str(acc.get("user_id") or acc.get("account_id") or acc.get("id") or "") for acc in ACCOUNTS if (acc.get("user_id") or acc.get("account_id") or acc.get("id")))
-    for duid in discovered_uids.union(tokens_db.keys()):
+    for duid in tokens_db.keys():
         if duid not in existing_uids and duid != "8881914294":
             name = tokens_db.get(duid, {}).get("name", f"Account_{duid}")
             if "nancy" not in str(name).lower():
                 ACCOUNTS.append({"user_id": int(duid), "account_id": duid, "name": name})
                 existing_uids.add(duid)
-
-    # 3. Merge individual fleet:tokens:{uid} and victors:pass:{uid} from Upstash via high-speed pipeline
-    if UPSTASH_URL and UPSTASH_TOKEN and discovered_uids:
-        try:
-            pipeline_cmds = []
-            for uid in discovered_uids:
-                if uid != "8881914294":
-                    pipeline_cmds.append(["GET", f"fleet:tokens:{uid}"])
-                    pipeline_cmds.append(["GET", f"victors:pass:{uid}"])
-            async with session.post(
-                f"{UPSTASH_URL}/pipeline",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}", "Content-Type": "application/json"},
-                json=pipeline_cmds,
-                timeout=aiohttp.ClientTimeout(total=8)
-            ) as pr:
-                if pr.status == 200:
-                    p_res = await pr.json()
-                    for cmd, item in zip(pipeline_cmds, p_res):
-                        key = cmd[1]
-                        uid = str(key.split(":")[-1])
-                        raw = item.get("result")
-                        if not raw:
-                            continue
-                        parsed = robust_json_loads(raw)
-                        if key.startswith("fleet:tokens:"):
-                            if isinstance(parsed, dict):
-                                existing = tokens_db.setdefault(uid, {})
-                                for tk, tv in parsed.items():
-                                    if tv:
-                                        if tk not in existing:
-                                            existing[tk] = tv
-                                        elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
-                                            existing[tk] = tv
-                        elif key.startswith("victors:pass:"):
-                            hp = None
-                            if isinstance(parsed, dict) and parsed.get("humanPass"):
-                                hp = parsed["humanPass"]
-                            elif isinstance(parsed, str) and len(parsed) > 10:
-                                hp = parsed
-                            elif raw and len(str(raw)) > 10:
-                                hp = raw
-                            if hp:
-                                existing = tokens_db.setdefault(uid, {})
-                                existing["victors_pass"] = hp
-        except Exception as pe:
-            logger.warning(f"Upstash pipeline token fetch fallback to parallel gather: {pe}")
-            async def fetch_one(uid):
-                try:
-                    async with session.get(f"{UPSTASH_URL}/get/fleet:tokens:{uid}", headers=up_h, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                        if r.status == 200:
-                            d = await r.json()
-                            raw = d.get("result")
-                            if raw:
-                                parsed = robust_json_loads(raw)
-                                if isinstance(parsed, dict):
-                                    return uid, parsed
-                except Exception:
-                    pass
-                return uid, None
-
-            gather_res = await asyncio.gather(*[fetch_one(uid) for uid in discovered_uids if uid != "8881914294"])
-            for uid, parsed in gather_res:
-                if parsed and isinstance(parsed, dict):
-                    existing = tokens_db.setdefault(str(uid), {})
-                    for tk, tv in parsed.items():
-                        if tv:
-                            if tk not in existing:
-                                existing[tk] = tv
-                            elif tk.endswith("_init_data") and extract_auth_date(tv) > extract_auth_date(existing.get(tk)):
-                                existing[tk] = tv
 
     # 3. Local High-Speed Cache (fleet_miniapp_tokens.json)
     local_f = os.path.join(BASE_DIR, "fleet_miniapp_tokens.json")
@@ -2186,26 +2050,6 @@ async def sweep_victors_tasks(session: aiohttp.ClientSession, uid: str, name: st
                             hp = rows[0][0]["value"]
         except Exception:
             pass
-    if not hp and UPSTASH_URL and UPSTASH_TOKEN:
-        try:
-            async with session.get(
-                f"{UPSTASH_URL}/get/victors:pass:{uid}",
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as pr:
-                if pr.status == 200:
-                    pd = await pr.json()
-                    r_val = pd.get("result")
-                    if r_val:
-                        p_hp = robust_json_loads(r_val)
-                        if isinstance(p_hp, dict) and p_hp.get("humanPass"):
-                            hp = p_hp["humanPass"]
-                        elif isinstance(p_hp, str) and len(p_hp) > 10:
-                            hp = p_hp
-                        else:
-                            hp = r_val
-        except Exception:
-            pass
 
     vic_h = {
         "User-Agent": acc.get("user_agent") or "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Mobile",
@@ -2709,11 +2553,6 @@ async def process_account(session: aiohttp.ClientSession, acc: dict, tokens_db: 
         # Propagate newly acquired JWT / refresh tokens to merged_toks and persistent cloud stores
         if merged_toks.get("hunter_jwt"):
             acc["hunter_jwt"] = merged_toks["hunter_jwt"]
-            if UPSTASH_URL and UPSTASH_TOKEN:
-                try:
-                    await session.post(f"{UPSTASH_URL}/set/fleet:tokens:{uid}:hunter_jwt", data=merged_toks["hunter_jwt"].encode("utf-8"), headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
-                except Exception:
-                    pass
         if acc.get("earnvault_refresh_token"):
             merged_toks["earnvault_refresh_token"] = acc["earnvault_refresh_token"]
 
@@ -2752,7 +2591,7 @@ async def main():
     async with aiohttp.ClientSession(connector=conn) as session:
         t_start = time.time()
         tokens_db = await fetch_all_tokens(session)
-        logger.info(f"Loaded tokens for {len(tokens_db)} accounts from Upstash Redis.")
+        logger.info(f"Loaded tokens for {len(tokens_db)} accounts from Turso LibSQL SSOT.")
 
         # Concurrency semaphore of 5 to balance speed and stability
         sem = asyncio.Semaphore(5)
